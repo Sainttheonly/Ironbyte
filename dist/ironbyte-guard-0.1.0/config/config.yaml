@@ -1,0 +1,25 @@
+mode: detect_only   # detect_only or enforce
+thresholds:
+  window_seconds: 1
+  distinct_files: 50
+  bytes: 5242880
+allowlist:
+  - apt
+  - apt-get
+  - dpkg
+  - unattended-upgr
+  - rsync
+  - tar
+  - gzip
+  - pigz
+  - zstd
+  - updatedb
+  - locate
+  - cp
+  - mv
+  - ironbyte-guard
+exclude_dirs:
+  - /var/log/
+  - /var/cache/
+  - /tmp/
+  - /home/saint/.cache/

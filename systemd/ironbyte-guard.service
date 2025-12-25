@@ -1,0 +1,14 @@
+[Unit]
+Description=IronByte Guard (eBPF ransomware circuit breaker)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ironbyte-guard
+Restart=always
+RestartSec=2
+Environment=ENFORCE=0
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

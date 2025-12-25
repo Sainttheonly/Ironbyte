@@ -1,0 +1,11 @@
+[package]
+name = "ironbyte-guard"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+libbpf-rs = "0.24"
+nix = { version = "0.30", features = ["signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
