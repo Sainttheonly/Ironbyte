@@ -13,10 +13,8 @@ const O_TRUNC: u32 = 0x0200;
 
 const BPF_OBJ_INSTALLED: &str = "/usr/lib/ironbyte-guard/guard.bpf.o";
 const BPF_OBJ_DEV: &str = "/home/saint/dev/ironbyte-guard/bpf/guard.bpf.o";
-
 const CFG_PATH: &str = "/etc/ironbyte-guard/config.yaml";
 
-// FNV must match eBPF
 const FNV_OFFSET: u64 = 1469598103934665603;
 const FNV_PRIME: u64 = 1099511628211;
 
@@ -31,8 +29,9 @@ fn fnv1a64(s: &str) -> u64 {
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    mode: Option<String>, // "detect_only" or "enforce"
+    mode: Option<String>,
     thresholds: Option<Thresholds>,
+    cooldown_seconds: Option<u64>,
     allowlist: Option<Vec<String>>,
     exclude_dirs: Option<Vec<String>>,
 }
@@ -54,6 +53,7 @@ impl Config {
                 distinct_files: Some(50),
                 bytes: Some(5 * 1024 * 1024),
             }),
+            cooldown_seconds: Some(30),
             allowlist: Some(vec![
                 "apt","apt-get","dpkg","unattended-upgr","rsync","tar","gzip","pigz","zstd",
                 "updatedb","locate","cp","mv","ironbyte-guard"
@@ -88,6 +88,10 @@ impl Config {
 
     fn bytes_thresh(&self) -> u64 {
         self.thresholds.as_ref().and_then(|t| t.bytes).unwrap_or(5 * 1024 * 1024)
+    }
+
+    fn cooldown_ns(&self) -> u64 {
+        self.cooldown_seconds.unwrap_or(30) * 1_000_000_000
     }
 
     fn allowlist_set(&self) -> HashSet<String> {
@@ -147,14 +151,19 @@ fn main() -> Result<()> {
     let window_ns = cfg.window_ns();
     let distinct_thresh = cfg.distinct_thresh();
     let bytes_thresh = cfg.bytes_thresh();
+    let cooldown_ns = cfg.cooldown_ns();
     let allowlist = cfg.allowlist_set();
     let excluded_dirs = cfg.excluded_dir_hashes();
 
     let bpf_obj = pick_bpf_obj();
     eprintln!("loading BPF obj: {}", bpf_obj);
-    eprintln!("config: mode={}, window_ns={}, distinct>={}, bytes>={}",
+    eprintln!(
+        "config: mode={}, window_ns={}, distinct>={}, bytes>={}, cooldown_ns={}",
         if enforce { "ENFORCE" } else { "DETECT_ONLY" },
-        window_ns, distinct_thresh, bytes_thresh
+        window_ns,
+        distinct_thresh,
+        bytes_thresh,
+        cooldown_ns
     );
 
     let mut obj = ObjectBuilder::default()
@@ -197,6 +206,7 @@ fn main() -> Result<()> {
 
     let mut fd_map: HashMap<(u32, i32), (u32, u64, u64)> = HashMap::new();
     let mut windows: HashMap<u32, WindowState> = HashMap::new();
+    let mut last_kill_ns: HashMap<u32, u64> = HashMap::new();
 
     rb.add(&events_map, move |data: &[u8]| {
         if data.len() != mem::size_of::<FileEvent>() {
@@ -209,7 +219,6 @@ fn main() -> Result<()> {
         }
 
         let comm = comm_str(ev.comm);
-
         if allowlist.contains(&comm) {
             return 0;
         }
@@ -247,12 +256,26 @@ fn main() -> Result<()> {
 
                 if !w.tripped && w.distinct.len() >= distinct_thresh && w.bytes >= bytes_thresh {
                     w.tripped = true;
+
+                    // cooldown check (enforce only)
+                    if enforce {
+                        let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
+                        if ev.ts_ns.saturating_sub(last) < cooldown_ns {
+                            println!(
+                                "⚠️  COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}",
+                                ev.tgid, w.last_comm, w.distinct.len(), w.bytes
+                            );
+                            return 0;
+                        }
+                    }
+
                     println!(
                         "🚨 DETECT tgid={} comm={} distinct={} bytes={} enforce={}",
                         ev.tgid, w.last_comm, w.distinct.len(), w.bytes, enforce
                     );
 
                     if enforce {
+                        last_kill_ns.insert(ev.tgid, ev.ts_ns);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                         println!("✅ KILLED tgid={}", ev.tgid);
                     }
@@ -267,8 +290,8 @@ fn main() -> Result<()> {
     let ringbuf = rb.build().context("build ringbuf")?;
 
     println!(
-        "ironbyte-guard: mode={} (CONFIG ON) (ALLOWLIST ON) (DIR EXCLUDES ON)",
-        if enforce { "ENFORCE" } else { "DETECT_ONLY" },
+        "ironbyte-guard: mode={} (CONFIG ON) (ALLOWLIST ON) (DIR EXCLUDES ON) (COOLDOWN ON)",
+        if enforce { "ENFORCE" } else { "DETECT_ONLY" }
     );
 
     loop {
