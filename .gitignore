@@ -1,1 +1,15 @@
+# Rust
 /target
+**/*.rs.bk
+
+# Build artifacts
+/dist
+/bpf/guard.bpf.o
+
+# Generated kernel header (machine-specific, huge)
+bpf/vmlinux.h
+
+# Editor / OS
+*.swp
+*.swo
+.DS_Store
