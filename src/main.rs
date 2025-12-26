@@ -68,7 +68,9 @@ impl Config {
     }
 
     fn enforce(&self) -> bool {
-        matches!(self.mode.as_deref(), Some("enforce") | Some("ENFORCE"))
+        let m = self.mode.as_deref().unwrap_or("detect_only");
+        let m = m.trim().to_ascii_lowercase();
+        m == "enforce"
     }
 
     fn window_ns(&self) -> u64 {
@@ -162,6 +164,8 @@ const _: [u8; 64] = [0u8; core::mem::size_of::<FileEvent64>()];
 
 fn main() -> Result<()> {
     let cfg = Config::load();
+    eprintln!("cfg.mode={:?} env.ENFORCE={:?} cfg_path={}", cfg.mode, std::env::var("ENFORCE").ok(), CFG_PATH);
+
 
     let enforce = cfg.enforce();
     let window_ns = cfg.window_ns();
@@ -277,23 +281,23 @@ fn main() -> Result<()> {
                     if enforce {
                         let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
                         if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                            println!(
-                                "⚠️  COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}",
+                            eprintln!(
+                                "COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}",
                                 ev.tgid, w.last_comm, w.distinct.len(), w.bytes
                             );
                             return 0;
                         }
                     }
 
-                    println!(
-                        "🚨 DETECT tgid={} comm={} distinct={} bytes={} enforce={}",
+                    eprintln!("TRIP tgid={} comm={} distinct={} bytes={} enforce={}",
                         ev.tgid, w.last_comm, w.distinct.len(), w.bytes, enforce
                     );
+
 
                     if enforce {
                         last_kill_ns.insert(ev.tgid, ev.ts_ns);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                        println!("✅ KILLED tgid={}", ev.tgid);
+                        eprintln!("KILLED tgid={} comm={}", ev.tgid, w.last_comm);
                     }
                 }
             }
@@ -305,7 +309,7 @@ fn main() -> Result<()> {
 
     let ringbuf = rb.build().context("build ringbuf")?;
 
-    println!(
+    eprintln!(
         "ironbyte-guard: mode={} (CONFIG ON) (ALLOWLIST ON) (DIR EXCLUDES ON) (COOLDOWN ON)",
         if enforce { "ENFORCE" } else { "DETECT_ONLY" }
     );
