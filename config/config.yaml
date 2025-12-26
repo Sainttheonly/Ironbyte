@@ -1,33 +1,27 @@
-# IronByte Guard Configuration
-
-mode: detect_only   # detect_only | enforce
+mode: enforce
 
 thresholds:
   window_seconds: 1
   distinct_files: 50
   bytes: 5242880
 
-# Minimum seconds between kills per TGID (enforce mode)
 cooldown_seconds: 30
+cooldown_scope: comm
+
+log_format: json
+log_level: info
 
 allowlist:
-  - apt
-  - apt-get
-  - dpkg
-  - unattended-upgr
   - rsync
   - tar
-  - gzip
-  - pigz
-  - zstd
-  - updatedb
-  - locate
-  - cp
-  - mv
+  - dpkg
+  - apt
+  - apt-get
   - ironbyte-guard
 
 exclude_dirs:
   - /var/log/
-  - /var/cache/
   - /tmp/
-  - /home/saint/.cache/
+  - /var/tmp/
+  - /proc/
+  - /sys/

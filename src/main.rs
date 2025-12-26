@@ -144,6 +144,22 @@ fn comm_str(comm: [u8; 16]) -> String {
     String::from_utf8_lossy(&comm).trim_end_matches('\0').to_string()
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FileEvent64 {
+    ts_ns: u64,
+    pid: u32,
+    tgid: u32,
+    opcode: u32,
+    fd: i32,
+    bytes: u32,
+    flags: u32,
+    path_hash: u64,
+    dir_hash: u64,
+    comm: [u8; 16],
+}
+const _: [u8; 64] = [0u8; core::mem::size_of::<FileEvent64>()];
+
 fn main() -> Result<()> {
     let cfg = Config::load();
 
