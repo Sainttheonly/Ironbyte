@@ -15,3 +15,9 @@ pub fn log_trip_score_dir(ctx: &TripContext, dh: u64, dir_n: usize) {
     );
 }
 
+pub fn log_trip_threshold(tgid: u32, comm: &str, distinct: usize, bytes: u64, enforce: bool) {
+    eprintln!(
+        "TRIP tgid={} comm={} distinct={} bytes={} enforce={}",
+        tgid, comm, distinct, bytes, enforce
+    );
+}

@@ -491,6 +491,8 @@ fn main() -> Result<()> {
     let mut dir_windows: HashMap<u64, DirWindow> = HashMap::new();
 
     let mut exe_cache: HashMap<u32, Option<String>> = HashMap::new();
+    let mut proc_cache: HashMap<u32, engine::process::ProcInfo> = HashMap::new();
+
     let mut blocked_map = blocked_map;
     let mut lsm_ctrl_map = lsm_ctrl_map;
 
@@ -609,6 +611,8 @@ fn main() -> Result<()> {
     bytes: w.bytes,
     enforce,
 }, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
+engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         if engine::enforce::maybe_kill_score(
                             enforce,
@@ -707,6 +711,8 @@ engine::trip::log_trip(&engine::types::TripContext {
     bytes: w.bytes,
     enforce,
 });
+engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -789,6 +795,8 @@ engine::trip::log_trip(&engine::types::TripContext {
     bytes: w.bytes,
     enforce,
 });
+engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -882,11 +890,15 @@ engine::trip::log_trip(&engine::types::TripContext {
 
                         w.tripped = true;
 
-                        eprintln!(
-                            "TRIP(score) tgid={} comm={} score={:.2} distinct={} bytes={} enforce={}",
-                            ev.tgid, w.last_comm, w.score, w.distinct.len(), w.bytes, enforce
-                        );
-
+                        engine::trip::log_trip(&engine::types::TripContext {
+                            tgid: ev.tgid,
+                            comm: &w.last_comm,
+                            score: w.score,
+                            distinct: w.distinct.len() as u32,
+                            bytes: w.bytes,
+                            enforce,
+                        });
+                        engine::process::log_ancestry(&mut proc_cache, ev.tgid);
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -908,6 +920,10 @@ engine::trip::log_trip(&engine::types::TripContext {
 
                 if !w.tripped && w.distinct.len() >= distinct_thresh && w.bytes >= bytes_thresh {
                     w.tripped = true;
+
+engine::trip::log_trip_threshold(ev.tgid, &w.last_comm, w.distinct.len(), w.bytes, enforce);
+engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+
 
                     // cooldown+kill (enforce only)
                     if engine::enforce::maybe_kill_threshold(
