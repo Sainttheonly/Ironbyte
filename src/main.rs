@@ -531,6 +531,8 @@ fn main() -> Result<()> {
     let mut windows: HashMap<u32, WindowState> = HashMap::new();
     let mut last_kill_ns: HashMap<u32, u64> = HashMap::new();
 
+    let mut risk_state: HashMap<u32, engine::risk::RiskState> = HashMap::new();
+
     let mut dir_windows: HashMap<u64, DirWindow> = HashMap::new();
 
     let mut exe_cache: HashMap<u32, Option<String>> = HashMap::new();
@@ -679,6 +681,8 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                        
+                            &mut risk_state,
                         ) {
                             return 0;
                         }
@@ -788,6 +792,8 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                        
+                            &mut risk_state,
                         ) {
                             return 0;
                         }
@@ -882,6 +888,8 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                        
+                            &mut risk_state,
                         ) {
                             return 0;
                         }
@@ -994,6 +1002,8 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                        
+                            &mut risk_state,
                         ) {
                             return 0;
                         }
@@ -1033,7 +1043,9 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                         &mut blocked_map,
                         &mut lsm_ctrl_map,
                         lsm_mark_blocked,
-                    ) {
+                    
+                            &mut risk_state,
+                        ) {
                         return 0;
                     }
                 }
