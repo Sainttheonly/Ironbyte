@@ -60,6 +60,45 @@ fn collect_subtree(root: u32, max_nodes: usize) -> Vec<u32> {
     out
 }
 
+
+// ---- kill budgets (userspace) ----
+#[derive(Default)]
+struct BudgetState {
+    window_start_ns: u64,
+    global_kills: u32,
+    per_id: std::collections::HashMap<u64, u32>,
+}
+
+fn budget_reset_if_needed(st: &mut BudgetState, now_ns: u64, window_ns: u64) {
+    if st.window_start_ns == 0 || now_ns.saturating_sub(st.window_start_ns) > window_ns {
+        st.window_start_ns = now_ns;
+        st.global_kills = 0;
+        st.per_id.clear();
+    }
+}
+
+fn budget_can_kill(st: &mut BudgetState, now_ns: u64, window_ns: u64,
+                   risk_key: u64, add: u32,
+                   global_limit: u32, per_id_limit: u32) -> bool {
+    budget_reset_if_needed(st, now_ns, window_ns);
+    let cur_id = *st.per_id.get(&risk_key).unwrap_or(&0);
+    if st.global_kills.saturating_add(add) > global_limit {
+        return false;
+    }
+    if cur_id.saturating_add(add) > per_id_limit {
+        return false;
+    }
+    true
+}
+
+fn budget_apply_kill(st: &mut BudgetState, risk_key: u64, add: u32) {
+    st.global_kills = st.global_kills.saturating_add(add);
+    let e = st.per_id.entry(risk_key).or_insert(0);
+    *e = e.saturating_add(add);
+}
+
+static BUDGET_STATE: std::sync::OnceLock<std::sync::Mutex<BudgetState>> = std::sync::OnceLock::new();
+
 // ---- identity sweep helpers ----
 const FNV_OFFSET: u64 = 1469598103934665603;
 const FNV_PRIME: u64  = 1099511628211;
@@ -197,6 +236,40 @@ pub fn maybe_kill_score(
     last_kill_ns.insert(tgid, ts_ns);
 
         let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+let max_killset: usize = 256;          // hard cap
+    let budget_window_ns: u64 = 60_000_000_000; // 60s
+    let global_limit: u32 = 200;               // max kills per minute
+    let per_id_limit: u32 = 50;                // max kills per identity per minute
+
+    // If killset is huge, do not SIGKILL storm; block-only and log.
+    if killset.len() > max_killset {
+        eprintln!("KILLSET_CAP_HIT key={} n={} cap={} -> block-only", risk_key, killset.len(), max_killset);
+        // block-only path
+        if !skip_block {
+            for p in &killset {
+                lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
+            }
+        }
+        return false;
+    }
+
+    // Budget check
+    let mtx = BUDGET_STATE.get_or_init(|| std::sync::Mutex::new(BudgetState::default()));
+    let mut st = mtx.lock().unwrap();
+    let add = killset.len() as u32;
+    if !budget_can_kill(&mut st, ts_ns, budget_window_ns, risk_key, add, global_limit, per_id_limit) {
+        eprintln!("BUDGET_HIT key={} add={} global={}/{} per_id={}/{} -> block-only",
+                  risk_key, add, st.global_kills, global_limit, *st.per_id.get(&risk_key).unwrap_or(&0), per_id_limit);
+        drop(st);
+        if !skip_block {
+            for p in &killset {
+                lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
+            }
+        }
+        return false;
+    }
+    budget_apply_kill(&mut st, risk_key, add);
+    drop(st);
 
     if !skip_block {
         for p in &killset {
@@ -274,6 +347,37 @@ pub fn maybe_kill_threshold(
     last_kill_ns.insert(tgid, ts_ns);
 
         let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+let max_killset: usize = 256;
+    let budget_window_ns: u64 = 60_000_000_000;
+    let global_limit: u32 = 200;
+    let per_id_limit: u32 = 50;
+
+    if killset.len() > max_killset {
+        eprintln!("KILLSET_CAP_HIT(threshold) key={} n={} cap={} -> block-only", risk_key, killset.len(), max_killset);
+        if !skip_block {
+            for p in &killset {
+                lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
+            }
+        }
+        return false;
+    }
+
+    let mtx = BUDGET_STATE.get_or_init(|| std::sync::Mutex::new(BudgetState::default()));
+    let mut st = mtx.lock().unwrap();
+    let add = killset.len() as u32;
+    if !budget_can_kill(&mut st, ts_ns, budget_window_ns, risk_key, add, global_limit, per_id_limit) {
+        eprintln!("BUDGET_HIT(threshold) key={} add={} global={}/{} per_id={}/{} -> block-only",
+                  risk_key, add, st.global_kills, global_limit, *st.per_id.get(&risk_key).unwrap_or(&0), per_id_limit);
+        drop(st);
+        if !skip_block {
+            for p in &killset {
+                lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
+            }
+        }
+        return false;
+    }
+    budget_apply_kill(&mut st, risk_key, add);
+    drop(st);
 
     if !skip_block {
         for p in &killset {
