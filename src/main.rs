@@ -30,15 +30,6 @@ fn fnv1a64(s: &str) -> u64 {
     }
     h
 }
-
-fn fnv1a64_prefix32(s: &str) -> u64 {
-    let mut h = FNV_OFFSET;
-    for &b in s.as_bytes().iter().take(32) {
-        h ^= b as u64;
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-    h
-}
 #[derive(Debug, Clone, Deserialize)]
 struct Policy {
     trusted_ancestry_skip_kill: Option<bool>,
