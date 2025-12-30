@@ -44,6 +44,8 @@ struct Policy {
     trusted_ancestry_skip_kill: Option<bool>,
     trusted_ancestry_skip_block: Option<bool>,
     identity_allowlist: Option<Vec<String>>,
+    enforce_token: Option<String>,
+    kill_key_cooldown_seconds: Option<u64>,
 }
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -93,6 +95,41 @@ struct Scoring {
 }
 
 impl Config {
+    fn window_ns(&self) -> u64 {
+        let s = self
+            .thresholds
+            .as_ref()
+            .and_then(|t| t.window_seconds)
+            .unwrap_or(2);
+        s * 1_000_000_000
+    }
+
+    fn kill_key_cooldown_ns(&self) -> u64 {
+        let s = self.policy.as_ref().and_then(|p| p.kill_key_cooldown_seconds).unwrap_or(30);
+        s * 1_000_000_000
+    }
+
+    fn enforce_enabled(&self) -> bool {
+        // Two-switch arming:
+        //   1) config mode = enforce
+        //   2) policy.enforce_token matches env IBG_ENFORCE_TOKEN
+        let mode_ok = self.mode.as_deref().unwrap_or("detect_only") == "enforce";
+        if !mode_ok {
+            return false;
+        }
+        let cfg_tok = self.policy.as_ref().and_then(|p| p.enforce_token.clone()).unwrap_or_default();
+        let env_tok = std::env::var("IBG_ENFORCE_TOKEN").unwrap_or_default();
+        if cfg_tok.is_empty() {
+            eprintln!("ENFORCE_REFUSED reason=missing_config_token");
+            return false;
+        }
+        if cfg_tok != env_tok {
+            eprintln!("ENFORCE_REFUSED reason=token_mismatch");
+            return false;
+        }
+        true
+    }
+
     fn policy_for_active_profile(&self) -> Option<&Policy> {
         let name = self.active_profile.as_deref()?;
         self.profiles.as_ref()?.get(name)
@@ -188,24 +225,7 @@ policy: None,
     fn scoring_ftruncate_add(&self) -> f64 {
         self.scoring.as_ref().and_then(|s| s.ftruncate_add).unwrap_or(12.0)
     }
-
-
-
-
-
-    fn enforce(&self) -> bool {
-        let m = self.mode.as_deref().unwrap_or("detect_only");
-        let m = m.trim().to_ascii_lowercase();
-        m == "enforce"
-    }
-
-    fn window_ns(&self) -> u64 {
-        self.thresholds
-            .as_ref()
-            .and_then(|t| t.window_seconds)
-            .unwrap_or(1)
-            * 1_000_000_000
-    }
+    fn enforce(&self) -> bool { self.enforce_enabled() }
 
     fn distinct_thresh(&self) -> usize {
         self.thresholds
@@ -386,6 +406,8 @@ fn main() -> Result<()> {
     let distinct_thresh = cfg.distinct_thresh();
     let bytes_thresh = cfg.bytes_thresh();
     let cooldown_ns = cfg.cooldown_ns();
+    let key_cooldown_ns: u64 = cfg.kill_key_cooldown_ns();
+    let kill_key_cooldown_ns = cfg.kill_key_cooldown_ns();
     let dir_window_ns = cfg.dir_window_ns();
     let dir_min_distinct = cfg.dir_min_distinct();
     let ignore_set = cfg.ignore_set();
@@ -393,14 +415,15 @@ fn main() -> Result<()> {
     let trusted_skip_kill = cfg.trusted_ancestry_skip_kill();
 
     let trusted_skip_block = cfg.trusted_ancestry_skip_block();
-    // identity allowlist (comm|exe) hashed to u64
-    let identity_allow_keys: std::collections::HashSet<u64> = cfg.policy
+    // identity allowlist (exact match): "comm|exe_norm"
+    let identity_allowlist: std::collections::HashSet<String> = cfg
+        .policy
         .as_ref()
         .and_then(|p| p.identity_allowlist.clone())
         .unwrap_or_default()
         .into_iter()
-        .map(|s| fnv1a64_prefix32(&s))
         .collect();
+
 
     let excluded_dirs = cfg.excluded_dir_hashes();
 
@@ -550,6 +573,8 @@ fn main() -> Result<()> {
     let mut windows: HashMap<u32, WindowState> = HashMap::new();
     let mut last_kill_ns: HashMap<u32, u64> = HashMap::new();
 
+    let mut last_kill_key_ns: HashMap<u64, u64> = HashMap::new();
+
     let mut risk_state: HashMap<u64, engine::risk::RiskState> = HashMap::new();
 
     let mut dir_windows: HashMap<u64, DirWindow> = HashMap::new();
@@ -688,8 +713,25 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
-let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
-let allowlisted = identity_allow_keys.contains(&risk_key);
+let exe_norm = if exe.starts_with("/tmp/") { "/tmp/" } else if exe.starts_with("/usr/bin/") { "/usr/bin/" } else { exe };
+let identity_str = format!("{}|{}", w.last_comm, exe_norm);
+let allowlisted = identity_allowlist.contains(&identity_str);
+eprintln!("ALLOW_IDENTITY str={} hit={}", identity_str, allowlisted);
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe_norm));
+                        let allowlisted = identity_allowlist.contains(&identity_str);
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+                        let mut killed_out: u32 = 0;
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -706,8 +748,15 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                            &mut killed_out,
+                            key_cooldown_ns,
+                            &mut last_kill_key_ns,
                             &mut risk_state
                         ) {
+                            if enforce && killed_out > 0 {
+                                last_kill_key_ns.insert(risk_key, ev.ts_ns);
+                                eprintln!("KILL_KEY_TS key={} killed_n={}", risk_key, killed_out);
+                            }
                             return 0;
                         }
                     }
@@ -804,8 +853,25 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
-let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
-let allowlisted = identity_allow_keys.contains(&risk_key);
+let exe_norm = if exe.starts_with("/tmp/") { "/tmp/" } else if exe.starts_with("/usr/bin/") { "/usr/bin/" } else { exe };
+let identity_str = format!("{}|{}", w.last_comm, exe_norm);
+let allowlisted = identity_allowlist.contains(&identity_str);
+eprintln!("ALLOW_IDENTITY str={} hit={}", identity_str, allowlisted);
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe_norm));
+                        let allowlisted = identity_allowlist.contains(&identity_str);
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+                        let mut killed_out: u32 = 0;
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -822,8 +888,15 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                            &mut killed_out,
+                            key_cooldown_ns,
+                            &mut last_kill_key_ns,
                             &mut risk_state
                         ) {
+                            if enforce && killed_out > 0 {
+                                last_kill_key_ns.insert(risk_key, ev.ts_ns);
+                                eprintln!("KILL_KEY_TS key={} killed_n={}", risk_key, killed_out);
+                            }
                             return 0;
                         }
                     }
@@ -905,8 +978,25 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
-let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
-let allowlisted = identity_allow_keys.contains(&risk_key);
+let exe_norm = if exe.starts_with("/tmp/") { "/tmp/" } else if exe.starts_with("/usr/bin/") { "/usr/bin/" } else { exe };
+let identity_str = format!("{}|{}", w.last_comm, exe_norm);
+let allowlisted = identity_allowlist.contains(&identity_str);
+eprintln!("ALLOW_IDENTITY str={} hit={}", identity_str, allowlisted);
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe_norm));
+                        let allowlisted = identity_allowlist.contains(&identity_str);
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+                        let mut killed_out: u32 = 0;
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -923,8 +1013,15 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                            &mut killed_out,
+                            key_cooldown_ns,
+                            &mut last_kill_key_ns,
                             &mut risk_state
                         ) {
+                            if enforce && killed_out > 0 {
+                                last_kill_key_ns.insert(risk_key, ev.ts_ns);
+                                eprintln!("KILL_KEY_TS key={} killed_n={}", risk_key, killed_out);
+                            }
                             return 0;
                         }
                     }
@@ -1024,8 +1121,25 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
-let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
-let allowlisted = identity_allow_keys.contains(&risk_key);
+let exe_norm = if exe.starts_with("/tmp/") { "/tmp/" } else if exe.starts_with("/usr/bin/") { "/usr/bin/" } else { exe };
+let identity_str = format!("{}|{}", w.last_comm, exe_norm);
+let allowlisted = identity_allowlist.contains(&identity_str);
+eprintln!("ALLOW_IDENTITY str={} hit={}", identity_str, allowlisted);
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe_norm));
+                        let allowlisted = identity_allowlist.contains(&identity_str);
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+                        let mut killed_out: u32 = 0;
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -1042,8 +1156,15 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
+                            &mut killed_out,
+                            key_cooldown_ns,
+                            &mut last_kill_key_ns,
                             &mut risk_state
                         ) {
+                            if enforce && killed_out > 0 {
+                                last_kill_key_ns.insert(risk_key, ev.ts_ns);
+                                eprintln!("KILL_KEY_TS key={} killed_n={}", risk_key, killed_out);
+                            }
                             return 0;
                         }
                     }
@@ -1069,27 +1190,51 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
                     // cooldown+kill (enforce only)
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
-let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
-let allowlisted = identity_allow_keys.contains(&risk_key);
+let exe_norm = if exe.starts_with("/tmp/") { "/tmp/" } else if exe.starts_with("/usr/bin/") { "/usr/bin/" } else { exe };
+let identity_str = format!("{}|{}", w.last_comm, exe_norm);
+let allowlisted = identity_allowlist.contains(&identity_str);
+eprintln!("ALLOW_IDENTITY str={} hit={}", identity_str, allowlisted);
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe_norm));
+                        let allowlisted = identity_allowlist.contains(&identity_str);
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+// per-identity kill cooldown (risk_key)
+let lastk = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+if enforce && lastk != 0 && ev.ts_ns.saturating_sub(lastk) < kill_key_cooldown_ns {
+    eprintln!("KILL_SUPPRESSED key={} dt_ns={} cooldown_ns={}", risk_key, ev.ts_ns.saturating_sub(lastk), kill_key_cooldown_ns);
+    return 0;
+}
+                        let mut killed_out: u32 = 0;
 if engine::enforce::maybe_kill_threshold(
-                            enforce,
-                            no_enforce,
-                            skip_kill,
-                            skip_block,
-                            risk_key,
-                            allowlisted,
-                            ev.tgid,
-                            ev.ts_ns,
-                            &w.last_comm,
-                            w.distinct.len(),
-                            w.bytes,
-                            cooldown_ns,
-                            &mut last_kill_ns,
-                            &mut blocked_map,
-                            &mut lsm_ctrl_map,
-                            lsm_mark_blocked,
-                            &mut risk_state
+                        enforce,
+                        no_enforce,
+                        skip_kill,
+                        skip_block,
+                        risk_key,
+                        allowlisted,
+                        ev.tgid,
+                        ev.ts_ns,
+                        &w.last_comm,
+                        w.distinct.len(),
+                        w.bytes,
+                        cooldown_ns,
+                        &mut last_kill_ns,
+                        &mut blocked_map,
+                        &mut lsm_ctrl_map,
+                        lsm_mark_blocked,
+                        &mut killed_out,
+                        key_cooldown_ns,
+                        &mut last_kill_key_ns,
+                        &mut risk_state
                         ) {
+                            if enforce && killed_out > 0 {
+                                last_kill_key_ns.insert(risk_key, ev.ts_ns);
+                                eprintln!("KILL_KEY_TS key={} killed_n={}", risk_key, killed_out);
+                            }
                         return 0;
                     }
                 }

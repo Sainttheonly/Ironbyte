@@ -185,13 +185,21 @@ pub fn maybe_kill_score(
     blocked_map: &mut dyn MapCore,
     lsm_ctrl_map: &mut dyn MapCore,
     lsm_mark_blocked: fn(bool, &mut dyn MapCore, &mut dyn MapCore, u32),
+    killed_out: &mut u32,
+    key_cooldown_ns: u64,
+    last_kill_key_ns: &mut HashMap<u64, u64>,
     risk_state: &mut HashMap<u64, RiskState>,
 ) -> bool {
+    *killed_out = 0;
+
     // Escalate risk
-    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
-    let next = cur.next();
+    let mut cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+let mut next = cur;
+if enforce {
+    next = cur.next();
     risk_state.insert(risk_key, next);
-    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+}
+eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
 if allowlisted {
     eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
     return false;
@@ -241,6 +249,26 @@ if allowlisted {
     last_kill_ns.insert(tgid, ts_ns);
 
         let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+
+    // DEBUG: per-key last kill (always log when we reach Kill stage)
+    let last_key = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+    if last_key == 0 {
+    } else {
+        let dt = ts_ns.saturating_sub(last_key);
+        if dt < key_cooldown_ns {
+            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            return false;
+        }
+    }
+
+    // per-identity kill cooldown (prevents respawn storms)
+    if let Some(last) = last_kill_key_ns.get(&risk_key).copied() {
+        let dt = ts_ns.saturating_sub(last);
+        if dt < key_cooldown_ns {
+            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            return false;
+        }
+    }
 let max_killset: usize = 256;          // hard cap
     let budget_window_ns: u64 = 60_000_000_000; // 60s
     let global_limit: u32 = 200;               // max kills per minute
@@ -288,6 +316,8 @@ let max_killset: usize = 256;          // hard cap
         let _ = kill(Pid::from_raw(*p as i32), Signal::SIGKILL);
     }
 
+    *killed_out = killset.len() as u32;
+    last_kill_key_ns.insert(risk_key, ts_ns);
     eprintln!("KILLED identity key={} roots<=64 n={} comm={} score={:.2}", risk_key, killset.len(), comm, score);
     false
 }
@@ -311,12 +341,20 @@ pub fn maybe_kill_threshold(
     blocked_map: &mut dyn MapCore,
     lsm_ctrl_map: &mut dyn MapCore,
     lsm_mark_blocked: fn(bool, &mut dyn MapCore, &mut dyn MapCore, u32),
+    killed_out: &mut u32,
+    key_cooldown_ns: u64,
+    last_kill_key_ns: &mut HashMap<u64, u64>,
     risk_state: &mut HashMap<u64, RiskState>,
 ) -> bool {
-    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
-    let next = cur.next();
+    *killed_out = 0;
+
+    let mut cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+let mut next = cur;
+if enforce {
+    next = cur.next();
     risk_state.insert(risk_key, next);
-    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+}
+eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
 if allowlisted {
     eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
     return false;
@@ -357,6 +395,26 @@ if allowlisted {
     last_kill_ns.insert(tgid, ts_ns);
 
         let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+
+    // DEBUG: per-key last kill (always log when we reach Kill stage)
+    let last_key = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
+    if last_key == 0 {
+    } else {
+        let dt = ts_ns.saturating_sub(last_key);
+        if dt < key_cooldown_ns {
+            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            return false;
+        }
+    }
+
+    // per-identity kill cooldown (prevents respawn storms)
+    if let Some(last) = last_kill_key_ns.get(&risk_key).copied() {
+        let dt = ts_ns.saturating_sub(last);
+        if dt < key_cooldown_ns {
+            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            return false;
+        }
+    }
 let max_killset: usize = 256;
     let budget_window_ns: u64 = 60_000_000_000;
     let global_limit: u32 = 200;
@@ -401,6 +459,8 @@ let max_killset: usize = 256;
         let _ = kill(Pid::from_raw(*p as i32), Signal::SIGKILL);
     }
 
+    *killed_out = killset.len() as u32;
+    last_kill_key_ns.insert(risk_key, ts_ns);
     eprintln!("KILLED(threshold) identity key={} roots<=64 n={} comm={}", risk_key, killset.len(), comm);
     false
 }
