@@ -48,6 +48,9 @@ struct Config {
     dir_window_seconds: Option<u64>,
     dir_min_distinct: Option<usize>,
 
+    active_profile: Option<String>,
+    profiles: Option<std::collections::HashMap<String, Policy>>,
+
     policy: Option<Policy>,
 }
 
@@ -80,15 +83,29 @@ struct Scoring {
 }
 
 impl Config {
+    fn policy_for_active_profile(&self) -> Option<&Policy> {
+        let name = self.active_profile.as_deref()?;
+        self.profiles.as_ref()?.get(name)
+    }
     fn trusted_ancestry_skip_block(&self) -> bool {
+        // Resolution order: active profile -> global policy -> default false
+        if let Some(p) = self.policy_for_active_profile() {
+            if let Some(v) = p.trusted_ancestry_skip_block {
+                return v;
+            }
+        }
         self.policy
             .as_ref()
             .and_then(|p| p.trusted_ancestry_skip_block)
             .unwrap_or(false)
     }
-
     fn trusted_ancestry_skip_kill(&self) -> bool {
-        // config-driven policy; default false
+        // Resolution order: active profile -> global policy -> default false
+        if let Some(p) = self.policy_for_active_profile() {
+            if let Some(v) = p.trusted_ancestry_skip_kill {
+                return v;
+            }
+        }
         self.policy
             .as_ref()
             .and_then(|p| p.trusted_ancestry_skip_kill)
@@ -99,6 +116,8 @@ impl Config {
         let s = std::fs::read_to_string(CFG_PATH).unwrap_or_default();
         serde_yaml::from_str(&s).unwrap_or(Config {
             mode: Some("detect_only".into()),
+            profiles: None,
+            active_profile: None,
 policy: None,
             thresholds: Some(Thresholds {
                 window_seconds: Some(1),
