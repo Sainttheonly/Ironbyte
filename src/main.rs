@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use libbpf_rs::{MapCore, ObjectBuilder, RingBufferBuilder};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -612,20 +610,20 @@ fn main() -> Result<()> {
     enforce,
 }, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
-                        if enforce && !no_enforce {
-                            let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
-                            if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                                eprintln!(
-                                    "COOLDOWN: tgid={} comm={} (skip kill) score={:.2}",
-                                    ev.tgid, w.last_comm, w.score
-                                );
-                                return 0;
-                            }
-
-                            last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                            eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
+                        if engine::enforce::maybe_kill_score(
+                            enforce,
+                            no_enforce,
+                            ev.tgid,
+                            ev.ts_ns,
+                            &w.last_comm,
+                            w.score,
+                            cooldown_ns,
+                            &mut last_kill_ns,
+                            &mut blocked_map,
+                            &mut lsm_ctrl_map,
+                            lsm_mark_blocked,
+                        ) {
+                            return 0;
                         }
                     }
                 }
@@ -709,23 +707,20 @@ engine::trip::log_trip(&engine::types::TripContext {
     bytes: w.bytes,
     enforce,
 });
-                        // LSM_MARK_ALL_TRIPSCORE
-                        if enforce {
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        }
-                        if enforce && !no_enforce {
-                            let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
-                            if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                                eprintln!(
-                                    "COOLDOWN: tgid={} comm={} (skip kill) score={:.2}",
-                                    ev.tgid, w.last_comm, w.score
-                                );
-                                return 0;
-                            }
-                            last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                            eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
+                        if engine::enforce::maybe_kill_score(
+                            enforce,
+                            no_enforce,
+                            ev.tgid,
+                            ev.ts_ns,
+                            &w.last_comm,
+                            w.score,
+                            cooldown_ns,
+                            &mut last_kill_ns,
+                            &mut blocked_map,
+                            &mut lsm_ctrl_map,
+                            lsm_mark_blocked,
+                        ) {
+                            return 0;
                         }
                     }
                 }
@@ -794,23 +789,20 @@ engine::trip::log_trip(&engine::types::TripContext {
     bytes: w.bytes,
     enforce,
 });
-                        // LSM_MARK_ALL_TRIPSCORE
-                        if enforce {
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        }
-                        if enforce && !no_enforce {
-                            let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
-                            if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                                eprintln!(
-                                    "COOLDOWN: tgid={} comm={} (skip kill) score={:.2}",
-                                    ev.tgid, w.last_comm, w.score
-                                );
-                                return 0;
-                            }
-                            last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                            eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
+                        if engine::enforce::maybe_kill_score(
+                            enforce,
+                            no_enforce,
+                            ev.tgid,
+                            ev.ts_ns,
+                            &w.last_comm,
+                            w.score,
+                            cooldown_ns,
+                            &mut last_kill_ns,
+                            &mut blocked_map,
+                            &mut lsm_ctrl_map,
+                            lsm_mark_blocked,
+                        ) {
+                            return 0;
                         }
                     }
                 }
@@ -895,24 +887,20 @@ engine::trip::log_trip(&engine::types::TripContext {
                             ev.tgid, w.last_comm, w.score, w.distinct.len(), w.bytes, enforce
                         );
 
-                        // LSM_MARK_ALL_TRIPSCORE
-                        if enforce {
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        }
-                        if enforce && !no_enforce {
-                            let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
-                            if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                                eprintln!(
-                                    "COOLDOWN: tgid={} comm={} (skip kill) score={:.2}",
-                                    ev.tgid, w.last_comm, w.score
-                                );
-                                return 0;
-                            }
-
-                            last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                            eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
+                        if engine::enforce::maybe_kill_score(
+                            enforce,
+                            no_enforce,
+                            ev.tgid,
+                            ev.ts_ns,
+                            &w.last_comm,
+                            w.score,
+                            cooldown_ns,
+                            &mut last_kill_ns,
+                            &mut blocked_map,
+                            &mut lsm_ctrl_map,
+                            lsm_mark_blocked,
+                        ) {
+                            return 0;
                         }
                     }
                 }
@@ -921,24 +909,22 @@ engine::trip::log_trip(&engine::types::TripContext {
                 if !w.tripped && w.distinct.len() >= distinct_thresh && w.bytes >= bytes_thresh {
                     w.tripped = true;
 
-                    // cooldown check (enforce only)
-                    if enforce && !no_enforce {
-                        let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
-                        if ev.ts_ns.saturating_sub(last) < cooldown_ns {
-                            eprintln!(
-                                "COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}",
-                                ev.tgid, w.last_comm, w.distinct.len(), w.bytes
-                            );
-                            return 0;
-                        }
-                    }
-
-                    engine::trip::log_trip_threshold(ev.tgid, &w.last_comm, w.distinct.len(), w.bytes, enforce);
-                    if enforce && !no_enforce {
-                        last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                        lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
-                        eprintln!("KILLED tgid={} comm={}", ev.tgid, w.last_comm);
+                    // cooldown+kill (enforce only)
+                    if engine::enforce::maybe_kill_threshold(
+                        enforce,
+                        no_enforce,
+                        ev.tgid,
+                        ev.ts_ns,
+                        &w.last_comm,
+                        w.distinct.len(),
+                        w.bytes,
+                        cooldown_ns,
+                        &mut last_kill_ns,
+                        &mut blocked_map,
+                        &mut lsm_ctrl_map,
+                        lsm_mark_blocked,
+                    ) {
+                        return 0;
                     }
                 }
             }
