@@ -611,7 +611,12 @@ fn main() -> Result<()> {
     bytes: w.bytes,
     enforce,
 }, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
-engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+// ancestry + context (LOG ONLY)
+let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
+eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
+let ctx = engine::context::classify(&chain);
+eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+
 
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         if engine::enforce::maybe_kill_score(
@@ -711,7 +716,12 @@ engine::trip::log_trip(&engine::types::TripContext {
     bytes: w.bytes,
     enforce,
 });
-engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+// ancestry + context (LOG ONLY)
+let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
+eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
+let ctx = engine::context::classify(&chain);
+eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
@@ -795,7 +805,12 @@ engine::process::log_ancestry(&mut proc_cache, ev.tgid);
     bytes: w.bytes,
     enforce,
 });
-engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+// ancestry + context (LOG ONLY)
+let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
+eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
+let ctx = engine::context::classify(&chain);
+eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
@@ -898,7 +913,12 @@ engine::process::log_ancestry(&mut proc_cache, ev.tgid);
                             bytes: w.bytes,
                             enforce,
                         });
-                        engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+                        // ancestry + context (LOG ONLY)
+let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
+eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
+let ctx = engine::context::classify(&chain);
+eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -922,7 +942,12 @@ engine::process::log_ancestry(&mut proc_cache, ev.tgid);
                     w.tripped = true;
 
 engine::trip::log_trip_threshold(ev.tgid, &w.last_comm, w.distinct.len(), w.bytes, enforce);
-engine::process::log_ancestry(&mut proc_cache, ev.tgid);
+// ancestry + context (LOG ONLY)
+let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
+eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
+let ctx = engine::context::classify(&chain);
+eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+
 
 
                     // cooldown+kill (enforce only)

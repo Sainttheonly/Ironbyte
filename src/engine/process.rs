@@ -57,14 +57,14 @@ pub fn ancestry(cache: &mut HashMap<u32, ProcInfo>, tgid: u32, max_depth: usize)
     out
 }
 
-pub fn log_ancestry(cache: &mut HashMap<u32, ProcInfo>, tgid: u32) {
-    let chain = ancestry(cache, tgid, 8);
-    // Format: tgid(comm exe) <- ppid(comm exe) <- ...
+
+
+pub fn fmt_ancestry(chain: &[ProcInfo]) -> String {
     let mut parts = Vec::new();
     for p in chain {
-        let comm = p.comm.unwrap_or_else(|| "?".into());
-        let exe  = p.exe.unwrap_or_else(|| "?".into());
+        let comm = p.comm.clone().unwrap_or_else(|| "?".into());
+        let exe  = p.exe.clone().unwrap_or_else(|| "?".into());
         parts.push(format!("{}({} {})", p.tgid, comm, exe));
     }
-    eprintln!("ANCESTRY {}", parts.join(" <- "));
+    parts.join(" <- ")
 }
