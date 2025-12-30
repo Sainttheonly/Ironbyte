@@ -6,17 +6,40 @@ use std::collections::HashMap;
 use crate::engine::risk::RiskState;
 
 // /proc subtree helpers
-fn read_children(tgid: u32) -> Vec<u32> {
-    let path = format!("/proc/{0}/task/{0}/children", tgid);
-    let s = std::fs::read_to_string(path).unwrap_or_default();
-    s.split_whitespace()
-        .filter_map(|x| x.parse::<u32>().ok())
-        .collect()
+fn read_ppid(pid: u32) -> Option<u32> {
+    // /proc/<pid>/stat: comm is in parentheses, ppid is field after state.
+    let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+    let rparen = stat.rfind(')')?;
+    let after = &stat[rparen + 1..];
+    let mut it = after.split_whitespace();
+    let _state = it.next()?;
+    let ppid_s = it.next()?;
+    ppid_s.parse::<u32>().ok()
+}
+
+fn build_children_map() -> std::collections::HashMap<u32, Vec<u32>> {
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    if let Ok(rd) = std::fs::read_dir("/proc") {
+        for ent in rd.flatten() {
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            if name.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(pid) = name.parse::<u32>() {
+                    if let Some(ppid) = read_ppid(pid) {
+                        children.entry(ppid).or_default().push(pid);
+                    }
+                }
+            }
+        }
+    }
+    children
 }
 
 fn collect_subtree(root: u32, max_nodes: usize) -> Vec<u32> {
+    let children = build_children_map();
     let mut out: Vec<u32> = Vec::new();
     let mut stack: Vec<u32> = vec![root];
+
     while let Some(pid) = stack.pop() {
         if out.len() >= max_nodes {
             break;
@@ -25,11 +48,13 @@ fn collect_subtree(root: u32, max_nodes: usize) -> Vec<u32> {
             continue;
         }
         out.push(pid);
-        for c in read_children(pid) {
-            if out.len() >= max_nodes {
-                break;
+        if let Some(kids) = children.get(&pid) {
+            for &c in kids {
+                if out.len() >= max_nodes {
+                    break;
+                }
+                stack.push(c);
             }
-            stack.push(c);
         }
     }
     out
@@ -72,28 +97,18 @@ pub fn maybe_kill_score(
     }
 
     // WARN: block root only (if allowed)
-    if next == RiskState::Warn {
-        if skip_block {
-            eprintln!("POLICY skip_block=true reason=trusted_ancestry");
-            return false;
-        }
-        lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, tgid);
+        if next == RiskState::Warn {
+        // log-only (no action)
         return false;
     }
 
+
     // CONTAIN: block subtree (no kill)
-    if next == RiskState::Contain {
-        if skip_block {
-            eprintln!("POLICY skip_block=true reason=trusted_ancestry");
-            return false;
-        }
-        let subtree = collect_subtree(tgid, 256);
-        for p in &subtree {
-            lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
-        }
-        eprintln!("CONTAIN subtree root={} n={}", tgid, subtree.len());
+        if next == RiskState::Contain {
+        // log-only (no action)
         return false;
     }
+
 
     // KILL: honor policies + cooldown, kill subtree
     if no_enforce {
@@ -162,27 +177,17 @@ pub fn maybe_kill_threshold(
     }
 
 
-    if next == RiskState::Warn {
-        if skip_block {
-            eprintln!("POLICY skip_block=true reason=trusted_ancestry");
-            return false;
-        }
-        lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, tgid);
+        if next == RiskState::Warn {
+        // log-only (no action)
         return false;
     }
 
-    if next == RiskState::Contain {
-        if skip_block {
-            eprintln!("POLICY skip_block=true reason=trusted_ancestry");
-            return false;
-        }
-        let subtree = collect_subtree(tgid, 256);
-        for p in &subtree {
-            lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
-        }
-        eprintln!("CONTAIN(threshold) subtree root={} n={}", tgid, subtree.len());
+
+        if next == RiskState::Contain {
+        // log-only (no action)
         return false;
     }
+
 
     if next != RiskState::Kill {
         return false;
