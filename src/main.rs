@@ -201,9 +201,15 @@ impl Config {
 }
 
 
-fn lsm_mark_blocked(blocked_map: &mut dyn MapCore, lsm_ctrl_map: &mut dyn MapCore, tgid: u32) {
+fn lsm_mark_blocked(enforce: bool, blocked_map: &mut dyn MapCore, lsm_ctrl_map: &mut dyn MapCore, tgid: u32) {
     // LSM_PHASE2: enable enforcement and mark this tgid as blocked
     eprintln!("LSM_MARK_CALLED: tgid={}", tgid);
+
+    if !enforce {
+        eprintln!("LSM_SKIP: detect_only (refusing to arm LSM / block TGID)");
+        return;
+    }
+
 
     let key0: u32 = 0;
     let one: u8 = 1;
@@ -458,6 +464,24 @@ fn main() -> Result<()> {
     let events_map = events_map.context("BPF map 'events' not found")?;
     let blocked_map = blocked_map.context("BPF map 'blocked_tgids' not found")?;
     let lsm_ctrl_map = lsm_ctrl_map.context("BPF map 'lsm_control' not found")?;
+
+    // --- SAFETY INVARIANT: detect_only ALWAYS disables enforcement ---
+
+    if !enforce {
+
+        let key0: u32 = 0;
+
+        let zero: u8 = 0;
+
+        match lsm_ctrl_map.update(&key0.to_ne_bytes(), &zero.to_ne_bytes(), libbpf_rs::MapFlags::ANY) {
+
+            Ok(_) => eprintln!("LSM_SAFETY_OK: lsm_control[0]=0 (detect_only)"),
+
+            Err(e) => eprintln!("LSM_SAFETY_ERR: failed to set lsm_control[0]=0: {e}"),
+
+        }
+
+    }
     let self_tgid = std::process::id();
 
     let mut fd_map: HashMap<(u32, i32), (u32, u64, u64)> = HashMap::new();
@@ -574,7 +598,7 @@ fn main() -> Result<()> {
                         w.tripped = true;
                         // LSM_PHASE2: mark TGID blocked when trip happens in ENFORCE mode
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
 
                         eprintln!(
@@ -585,11 +609,11 @@ fn main() -> Result<()> {
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
                         // LSM_MARK_AFTER_TRIPLOG
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
 
                         if enforce && !no_enforce {
@@ -603,7 +627,7 @@ fn main() -> Result<()> {
                             }
 
                             last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                             eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
                         }
@@ -688,7 +712,7 @@ fn main() -> Result<()> {
 
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
                         if enforce && !no_enforce {
                             let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
@@ -700,7 +724,7 @@ fn main() -> Result<()> {
                                 return 0;
                             }
                             last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                             eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
                         }
@@ -770,7 +794,7 @@ fn main() -> Result<()> {
 
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
                         if enforce && !no_enforce {
                             let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
@@ -782,7 +806,7 @@ fn main() -> Result<()> {
                                 return 0;
                             }
                             last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                             eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
                         }
@@ -871,7 +895,7 @@ fn main() -> Result<()> {
 
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
                         if enforce && !no_enforce {
                             let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
@@ -884,7 +908,7 @@ fn main() -> Result<()> {
                             }
 
                             last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                            lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                             eprintln!("KILLED tgid={} comm={} score={:.2}", ev.tgid, w.last_comm, w.score);
                         }
@@ -914,7 +938,7 @@ fn main() -> Result<()> {
 
                     if enforce && !no_enforce {
                         last_kill_ns.insert(ev.tgid, ev.ts_ns);
-                        lsm_mark_blocked(&mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
+                        lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         let _ = kill(Pid::from_raw(ev.tgid as i32), Signal::SIGKILL);
                         eprintln!("KILLED tgid={} comm={}", ev.tgid, w.last_comm);
                     }
