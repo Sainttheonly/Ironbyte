@@ -5,8 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::{mem, ptr, time::Duration};
 
-use crate::engine::enforce::{set_tunables, Tunables};
-
 mod engine;
 
 const OP_WRITE: u32 = 2;
@@ -39,10 +37,6 @@ struct Policy {
     identity_allowlist: Option<Vec<String>>,
     enforce_token: Option<String>,
     kill_key_cooldown_seconds: Option<u64>,
-    killset_cap: Option<u32>,
-    budget_window_ns: Option<u64>,
-    budget_global_limit: Option<u32>,
-    budget_per_id_limit: Option<u32>,
 }
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -397,37 +391,6 @@ const _: [u8; 64] = [0u8; core::mem::size_of::<FileEvent64>()];
 
 fn main() -> Result<()> {
     let cfg = Config::load();
-    // Wire policy -> enforcement tunables (set once; read by engine/enforce.rs)
-    // Defaults match enforce.rs (tunables()) fallback.
-    if let Some(pol) = cfg.policy.as_ref() {
-        let killset_cap = pol.killset_cap.unwrap_or(256) as usize;
-        let window_ns   = pol.budget_window_ns.unwrap_or(60000000000);
-        let global_lim  = pol.budget_global_limit.unwrap_or(200);
-        let per_id_lim  = pol.budget_per_id_limit.unwrap_or(50);
-
-        set_tunables(Tunables {
-            killset_cap,
-            budget_window_ns: window_ns,
-            budget_global_limit: global_lim,
-            budget_per_id_limit: per_id_lim,
-        });
-
-        eprintln!(
-            "[*] tunables wired: killset_cap={} window_ns={} global={} per_id={}",
-            killset_cap, window_ns, global_lim, per_id_lim
-        );
-    } else {
-        // No policy block: still set defaults explicitly so enforcement.rs never relies on implicit OnceLock state.
-        set_tunables(Tunables {
-            killset_cap: 256,
-            budget_window_ns: 60000000000,
-            budget_global_limit: 200,
-            budget_per_id_limit: 50,
-        });
-        eprintln!("[*] tunables wired: defaults (no policy)");
-    }
-
-
     eprintln!("cfg.mode={:?} env.ENFORCE={:?} cfg_path={}", cfg.mode, std::env::var("ENFORCE").ok(), CFG_PATH);
     let enforce = cfg.enforce();
     let window_ns = cfg.window_ns();
