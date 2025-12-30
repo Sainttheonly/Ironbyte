@@ -175,6 +175,7 @@ pub fn maybe_kill_score(
     skip_kill: bool,
     skip_block: bool,
     risk_key: u64,
+    allowlisted: bool,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -191,6 +192,10 @@ pub fn maybe_kill_score(
     let next = cur.next();
     risk_state.insert(risk_key, next);
     eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+if allowlisted {
+    eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
+    return false;
+}
 
     // Actions are gated by enforce
     if !enforce {
@@ -295,6 +300,7 @@ pub fn maybe_kill_threshold(
     skip_kill: bool,
     skip_block: bool,
     risk_key: u64,
+    allowlisted: bool,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -311,6 +317,10 @@ pub fn maybe_kill_threshold(
     let next = cur.next();
     risk_state.insert(risk_key, next);
     eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+if allowlisted {
+    eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
+    return false;
+}
 
     // Actions are gated by enforce
     if !enforce || no_enforce {

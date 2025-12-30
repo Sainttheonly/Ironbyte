@@ -30,10 +30,20 @@ fn fnv1a64(s: &str) -> u64 {
     }
     h
 }
+
+fn fnv1a64_prefix32(s: &str) -> u64 {
+    let mut h = FNV_OFFSET;
+    for &b in s.as_bytes().iter().take(32) {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
+}
 #[derive(Debug, Clone, Deserialize)]
 struct Policy {
     trusted_ancestry_skip_kill: Option<bool>,
     trusted_ancestry_skip_block: Option<bool>,
+    identity_allowlist: Option<Vec<String>>,
 }
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -383,6 +393,15 @@ fn main() -> Result<()> {
     let trusted_skip_kill = cfg.trusted_ancestry_skip_kill();
 
     let trusted_skip_block = cfg.trusted_ancestry_skip_block();
+    // identity allowlist (comm|exe) hashed to u64
+    let identity_allow_keys: std::collections::HashSet<u64> = cfg.policy
+        .as_ref()
+        .and_then(|p| p.identity_allowlist.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| fnv1a64_prefix32(&s))
+        .collect();
+
     let excluded_dirs = cfg.excluded_dir_hashes();
 
     let ignore_rules = cfg.ignore_rules.clone();
@@ -670,12 +689,14 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
 let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+let allowlisted = identity_allow_keys.contains(&risk_key);
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
-    skip_kill,
-    skip_block,
-    risk_key,
+                            skip_kill,
+                            skip_block,
+                            risk_key,
+                            allowlisted,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -685,8 +706,7 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
-                        
-                            &mut risk_state,
+                            &mut risk_state
                         ) {
                             return 0;
                         }
@@ -785,12 +805,14 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
 let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+let allowlisted = identity_allow_keys.contains(&risk_key);
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
-    skip_kill,
-    skip_block,
-    risk_key,
+                            skip_kill,
+                            skip_block,
+                            risk_key,
+                            allowlisted,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -800,8 +822,7 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
-                        
-                            &mut risk_state,
+                            &mut risk_state
                         ) {
                             return 0;
                         }
@@ -885,12 +906,14 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
 let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+let allowlisted = identity_allow_keys.contains(&risk_key);
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
-    skip_kill,
-    skip_block,
-    risk_key,
+                            skip_kill,
+                            skip_block,
+                            risk_key,
+                            allowlisted,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -900,8 +923,7 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
-                        
-                            &mut risk_state,
+                            &mut risk_state
                         ) {
                             return 0;
                         }
@@ -1003,12 +1025,14 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
 let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+let allowlisted = identity_allow_keys.contains(&risk_key);
 if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
-    skip_kill,
-    skip_block,
-    risk_key,
+                            skip_kill,
+                            skip_block,
+                            risk_key,
+                            allowlisted,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -1018,8 +1042,7 @@ if engine::enforce::maybe_kill_score(
                             &mut blocked_map,
                             &mut lsm_ctrl_map,
                             lsm_mark_blocked,
-                        
-                            &mut risk_state,
+                            &mut risk_state
                         ) {
                             return 0;
                         }
@@ -1047,24 +1070,25 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
 let exe = proc.exe.as_deref().unwrap_or("?");
 let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+let allowlisted = identity_allow_keys.contains(&risk_key);
 if engine::enforce::maybe_kill_threshold(
-                        enforce,
-                        no_enforce,
-    skip_kill,
-    skip_block,
-    risk_key,
-                        ev.tgid,
-                        ev.ts_ns,
-                        &w.last_comm,
-                        w.distinct.len(),
-                        w.bytes,
-                        cooldown_ns,
-                        &mut last_kill_ns,
-                        &mut blocked_map,
-                        &mut lsm_ctrl_map,
-                        lsm_mark_blocked,
-                    
-                            &mut risk_state,
+                            enforce,
+                            no_enforce,
+                            skip_kill,
+                            skip_block,
+                            risk_key,
+                            allowlisted,
+                            ev.tgid,
+                            ev.ts_ns,
+                            &w.last_comm,
+                            w.distinct.len(),
+                            w.bytes,
+                            cooldown_ns,
+                            &mut last_kill_ns,
+                            &mut blocked_map,
+                            &mut lsm_ctrl_map,
+                            lsm_mark_blocked,
+                            &mut risk_state
                         ) {
                         return 0;
                     }
