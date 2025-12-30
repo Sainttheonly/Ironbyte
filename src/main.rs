@@ -33,6 +33,7 @@ fn fnv1a64(s: &str) -> u64 {
 #[derive(Debug, Clone, Deserialize)]
 struct Policy {
     trusted_ancestry_skip_kill: Option<bool>,
+    trusted_ancestry_skip_block: Option<bool>,
 }
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -79,6 +80,13 @@ struct Scoring {
 }
 
 impl Config {
+    fn trusted_ancestry_skip_block(&self) -> bool {
+        self.policy
+            .as_ref()
+            .and_then(|p| p.trusted_ancestry_skip_block)
+            .unwrap_or(false)
+    }
+
     fn trusted_ancestry_skip_kill(&self) -> bool {
         // config-driven policy; default false
         self.policy
@@ -355,6 +363,7 @@ fn main() -> Result<()> {
     let no_enforce_set = cfg.no_enforce_set();
     let trusted_skip_kill = cfg.trusted_ancestry_skip_kill();
 
+    let trusted_skip_block = cfg.trusted_ancestry_skip_block();
     let excluded_dirs = cfg.excluded_dir_hashes();
 
     let ignore_rules = cfg.ignore_rules.clone();
@@ -631,6 +640,7 @@ let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
+let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -639,6 +649,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                             enforce,
                             no_enforce,
     skip_kill,
+    skip_block,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -738,6 +749,7 @@ let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
+let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -745,6 +757,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                             enforce,
                             no_enforce,
     skip_kill,
+    skip_block,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -829,6 +842,7 @@ let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
+let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -836,6 +850,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                             enforce,
                             no_enforce,
     skip_kill,
+    skip_block,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -939,12 +954,14 @@ let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
+let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
     skip_kill,
+    skip_block,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -970,6 +987,7 @@ let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
+let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -979,6 +997,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                         enforce,
                         no_enforce,
     skip_kill,
+    skip_block,
                         ev.tgid,
                         ev.ts_ns,
                         &w.last_comm,
