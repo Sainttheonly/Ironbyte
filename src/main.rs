@@ -531,7 +531,7 @@ fn main() -> Result<()> {
     let mut windows: HashMap<u32, WindowState> = HashMap::new();
     let mut last_kill_ns: HashMap<u32, u64> = HashMap::new();
 
-    let mut risk_state: HashMap<u32, engine::risk::RiskState> = HashMap::new();
+    let mut risk_state: HashMap<u64, engine::risk::RiskState> = HashMap::new();
 
     let mut dir_windows: HashMap<u64, DirWindow> = HashMap::new();
 
@@ -667,11 +667,15 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
-                        if engine::enforce::maybe_kill_score(
+let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
+let exe = proc.exe.as_deref().unwrap_or("?");
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
     skip_kill,
     skip_block,
+    risk_key,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -778,11 +782,15 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 
 
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
-                        if engine::enforce::maybe_kill_score(
+let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
+let exe = proc.exe.as_deref().unwrap_or("?");
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
     skip_kill,
     skip_block,
+    risk_key,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -874,11 +882,15 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 
 
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
-                        if engine::enforce::maybe_kill_score(
+let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
+let exe = proc.exe.as_deref().unwrap_or("?");
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
     skip_kill,
     skip_block,
+    risk_key,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -988,11 +1000,15 @@ let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
-                        if engine::enforce::maybe_kill_score(
+let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
+let exe = proc.exe.as_deref().unwrap_or("?");
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
     skip_kill,
     skip_block,
+    risk_key,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -1028,11 +1044,15 @@ eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reas
 
 eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                     // cooldown+kill (enforce only)
-                    if engine::enforce::maybe_kill_threshold(
+let proc = engine::process::get_proc(&mut proc_cache, ev.tgid);
+let exe = proc.exe.as_deref().unwrap_or("?");
+let risk_key = fnv1a64(&format!("{}|{}", w.last_comm, exe));
+if engine::enforce::maybe_kill_threshold(
                         enforce,
                         no_enforce,
     skip_kill,
     skip_block,
+    risk_key,
                         ev.tgid,
                         ev.ts_ns,
                         &w.last_comm,

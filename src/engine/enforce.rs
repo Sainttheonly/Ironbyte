@@ -42,6 +42,7 @@ pub fn maybe_kill_score(
     no_enforce: bool,
     skip_kill: bool,
     skip_block: bool,
+    risk_key: u64,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -51,17 +52,19 @@ pub fn maybe_kill_score(
     blocked_map: &mut dyn MapCore,
     lsm_ctrl_map: &mut dyn MapCore,
     lsm_mark_blocked: fn(bool, &mut dyn MapCore, &mut dyn MapCore, u32),
-    risk_state: &mut HashMap<u32, RiskState>,
+    risk_state: &mut HashMap<u64, RiskState>,
 ) -> bool {
+    // Escalate risk
+    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+    let next = cur.next();
+    risk_state.insert(risk_key, next);
+    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+
+    // Actions are gated by enforce
     if !enforce {
         return false;
     }
 
-    // Escalate risk
-    let cur = risk_state.get(&tgid).copied().unwrap_or(RiskState::Observe);
-    let next = cur.next();
-    risk_state.insert(tgid, next);
-    eprintln!("RISK tgid={} {:?}->{:?}", tgid, cur, next);
 
     // OBSERVE: log-only
     if next == RiskState::Observe {
@@ -135,6 +138,7 @@ pub fn maybe_kill_threshold(
     no_enforce: bool,
     skip_kill: bool,
     skip_block: bool,
+    risk_key: u64,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -145,16 +149,18 @@ pub fn maybe_kill_threshold(
     blocked_map: &mut dyn MapCore,
     lsm_ctrl_map: &mut dyn MapCore,
     lsm_mark_blocked: fn(bool, &mut dyn MapCore, &mut dyn MapCore, u32),
-    risk_state: &mut HashMap<u32, RiskState>,
+    risk_state: &mut HashMap<u64, RiskState>,
 ) -> bool {
+    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+    let next = cur.next();
+    risk_state.insert(risk_key, next);
+    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+
+    // Actions are gated by enforce
     if !enforce || no_enforce {
         return false;
     }
 
-    let cur = risk_state.get(&tgid).copied().unwrap_or(RiskState::Observe);
-    let next = cur.next();
-    risk_state.insert(tgid, next);
-    eprintln!("RISK tgid={} {:?}->{:?}", tgid, cur, next);
 
     if next == RiskState::Warn {
         if skip_block {
