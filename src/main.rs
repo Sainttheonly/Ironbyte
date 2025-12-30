@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::{mem, ptr, time::Duration};
 
+mod engine;
+
 const OP_WRITE: u32 = 2;
 const OP_CLOSE: u32 = 3;
 const OP_OPENAT_RET: u32 = 4;
@@ -601,11 +603,14 @@ fn main() -> Result<()> {
                             lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
                         }
 
-                        eprintln!(
-                            "TRIP(score) tgid={} comm={} score={:.2} distinct={} bytes={} enforce={} dh={} dir_n={}",
-                            ev.tgid, w.last_comm, w.score, w.distinct.len(), w.bytes, enforce, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0)
-                        );
-
+                        engine::trip::log_trip_score_dir(&engine::types::TripContext {
+    tgid: ev.tgid,
+    comm: &w.last_comm,
+    score: w.score,
+    distinct: w.distinct.len() as u32,
+    bytes: w.bytes,
+    enforce,
+}, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
@@ -705,11 +710,14 @@ fn main() -> Result<()> {
                         }
 
                         w.tripped = true;
-                        eprintln!(
-                            "TRIP(score) tgid={} comm={} score={:.2} distinct={} bytes={} enforce={}",
-                            ev.tgid, w.last_comm, w.score, w.distinct.len(), w.bytes, enforce
-                        );
-
+engine::trip::log_trip(&engine::types::TripContext {
+    tgid: ev.tgid,
+    comm: &comm,
+    score: w.score,
+    distinct: w.distinct.len() as u32,
+    bytes: w.bytes,
+    enforce,
+});
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
                             lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
@@ -787,11 +795,14 @@ fn main() -> Result<()> {
                         }
 
                         w.tripped = true;
-                        eprintln!(
-                            "TRIP(score) tgid={} comm={} score={:.2} distinct={} bytes={} enforce={}",
-                            ev.tgid, w.last_comm, w.score, w.distinct.len(), w.bytes, enforce
-                        );
-
+                        engine::trip::log_trip(&engine::types::TripContext {
+    tgid: ev.tgid,
+    comm: &w.last_comm,
+    score: w.score,
+    distinct: w.distinct.len() as u32,
+    bytes: w.bytes,
+    enforce,
+});
                         // LSM_MARK_ALL_TRIPSCORE
                         if enforce {
                             lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
@@ -931,11 +942,7 @@ fn main() -> Result<()> {
                         }
                     }
 
-                    eprintln!("TRIP tgid={} comm={} distinct={} bytes={} enforce={}",
-                        ev.tgid, w.last_comm, w.distinct.len(), w.bytes, enforce
-                    );
-
-
+                    engine::trip::log_trip_threshold(ev.tgid, &w.last_comm, w.distinct.len(), w.bytes, enforce);
                     if enforce && !no_enforce {
                         last_kill_ns.insert(ev.tgid, ev.ts_ns);
                         lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
