@@ -5,6 +5,31 @@ use std::collections::HashMap;
 
 use crate::engine::risk::RiskState;
 
+
+// ---- tunables (set once by userspace main) ----
+#[derive(Clone, Copy)]
+pub struct Tunables {
+    pub killset_cap: usize,
+    pub budget_window_ns: u64,
+    pub budget_global_limit: u32,
+    pub budget_per_id_limit: u32,
+}
+
+static TUNABLES: std::sync::OnceLock<Tunables> = std::sync::OnceLock::new();
+
+pub fn set_tunables(t: Tunables) {
+    let _ = TUNABLES.set(t);
+}
+
+fn tunables() -> Tunables {
+    *TUNABLES.get().unwrap_or(&Tunables {
+        killset_cap: 256,
+        budget_window_ns: 60_000_000_000,
+        budget_global_limit: 200,
+        budget_per_id_limit: 50,
+    })
+}
+
 // /proc subtree helpers
 fn read_ppid(pid: u32) -> Option<u32> {
     // /proc/<pid>/stat: comm is in parentheses, ppid is field after state.
@@ -193,7 +218,7 @@ pub fn maybe_kill_score(
     *killed_out = 0;
 
     // Escalate risk
-    let mut cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
 let mut next = cur;
 if enforce {
     next = cur.next();
@@ -269,10 +294,11 @@ if allowlisted {
             return false;
         }
     }
-let max_killset: usize = 256;          // hard cap
-    let budget_window_ns: u64 = 60_000_000_000; // 60s
-    let global_limit: u32 = 200;               // max kills per minute
-    let per_id_limit: u32 = 50;                // max kills per identity per minute
+let t = tunables();
+    let max_killset: usize = t.killset_cap;
+    let budget_window_ns: u64 = t.budget_window_ns;
+    let global_limit: u32 = t.budget_global_limit;
+    let per_id_limit: u32 = t.budget_per_id_limit;                // max kills per identity per minute
 
     // If killset is huge, do not SIGKILL storm; block-only and log.
     if killset.len() > max_killset {
@@ -348,7 +374,7 @@ pub fn maybe_kill_threshold(
 ) -> bool {
     *killed_out = 0;
 
-    let mut cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
+    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
 let mut next = cur;
 if enforce {
     next = cur.next();
@@ -415,10 +441,11 @@ if allowlisted {
             return false;
         }
     }
-let max_killset: usize = 256;
-    let budget_window_ns: u64 = 60_000_000_000;
-    let global_limit: u32 = 200;
-    let per_id_limit: u32 = 50;
+let t = tunables();
+    let max_killset: usize = t.killset_cap;
+    let budget_window_ns: u64 = t.budget_window_ns;
+    let global_limit: u32 = t.budget_global_limit;
+    let per_id_limit: u32 = t.budget_per_id_limit;
 
     if killset.len() > max_killset {
         eprintln!("KILLSET_CAP_HIT(threshold) key={} n={} cap={} -> block-only", risk_key, killset.len(), max_killset);
