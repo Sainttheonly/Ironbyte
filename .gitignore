@@ -13,3 +13,7 @@ bpf/vmlinux.h
 *.swp
 *.swo
 .DS_Store
+
+# Local patch scripts
+patch_*.py
+bpf/patch_*.py
