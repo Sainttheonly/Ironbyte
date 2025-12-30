@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec > >(stdbuf -oL -eL cat) 2>&1
+
+ROOT="$HOME/dev/ironbyte-guard"
+CFG="/etc/ironbyte-guard/config.yaml"
+
+say(){ echo -e "\n[*] $*\n"; }
+need_sudo(){ sudo -n true 2>/dev/null || { echo "ERROR: sudo needs password. Run: sudo -v"; exit 1; }; }
+
+wire_token(){
+  local tok
+  tok="$(sudo awk -F'"' '/enforce_token:/ {print $2; exit}' "$CFG" || true)"
+  [[ -n "$tok" ]] || { echo "ERROR: enforce_token missing in $CFG"; exit 1; }
+
+  sudo install -d -m 755 /etc/ironbyte-guard
+  printf 'IBG_ENFORCE_TOKEN=%s\n' "$tok" | sudo tee /etc/ironbyte-guard/enforce.env >/dev/null
+  sudo chmod 600 /etc/ironbyte-guard/enforce.env
+  sudo chown root:root /etc/ironbyte-guard/enforce.env
+
+  sudo install -d -m 755 /etc/systemd/system/ironbyte-guard.service.d
+  sudo tee /etc/systemd/system/ironbyte-guard.service.d/enforce-env.conf >/dev/null <<'EOD'
+[Service]
+EnvironmentFile=/etc/ironbyte-guard/enforce.env
+EOD
+  sudo systemctl daemon-reload
+}
+
+restart_guard(){
+  sudo systemctl restart ironbyte-guard
+  sleep 1
+  echo "[*] PID=$(systemctl show -p MainPID --value ironbyte-guard)"
+}
+
+set_mode(){
+  local mode="$1"
+  sudo sed -i "s/^mode: .*/mode: $mode/" "$CFG"
+}
+
+set_profile(){
+  local prof="$1"
+  if sudo grep -q '^active_profile:' "$CFG"; then
+    sudo sed -i "s/^active_profile: .*/active_profile: $prof/" "$CFG"
+  else
+    printf "\nactive_profile: %s\n" "$prof" | sudo tee -a "$CFG" >/dev/null
+  fi
+}
+
+logs_since(){
+  local since="$1"
+  sudo journalctl -u ironbyte-guard --since "$since" --no-pager | egrep \
+  "config: mode=|ENFORCE_REFUSED|RISK key=|ALLOWLIST_HIT|KILLED identity|KILLED subtree|KILL_SUPPRESSED|BUDGET_HIT|KILLSET_CAP_HIT|KILL_KEY_COOLDOWN" || true
+}
+
+cleanup_detect(){
+  say "cleanup: detect_only"
+  set_mode detect_only || true
+  restart_guard || true
+}
+
+usage(){
+  cat <<USG
+Usage:
+  ibg build                 build+install+restart, wire token envfile
+  ibg mode <detect_only|enforce>
+  ibg profile <dev|prod>
+  ibg test detect|allow|kill
+  ibg logs <seconds>
+USG
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  build)
+    need_sudo
+    say "build release + install"
+    cd "$ROOT"
+    cargo build --release >/dev/null
+    sudo install -m 755 target/release/ironbyte-guard /usr/local/bin/ironbyte-guard
+    say "wire token envfile + drop-in"
+    wire_token
+    restart_guard
+    systemctl show -p Environment ironbyte-guard | tr ' ' '\n' | grep IBG_ENFORCE_TOKEN || { echo "ERROR: token not visible"; exit 1; }
+    ;;
+  mode)
+    need_sudo
+    set_mode "${1:?}"
+    restart_guard
+    ;;
+  profile)
+    need_sudo
+    set_profile "${1:?}"
+    restart_guard
+    ;;
+  logs)
+    need_sudo
+    secs="${1:-60}"
+    since="$(date --date="${secs} seconds ago" --iso-8601=seconds)"
+    logs_since "$since"
+    ;;
+  test)
+    need_sudo
+    trap cleanup_detect EXIT
+    t="${1:?}"
+    case "$t" in
+      detect)
+        say "detect_only + /tmp/ibgtest (no kill expected)"
+        set_mode detect_only
+        restart_guard
+        since="$(date --iso-8601=seconds)"
+        timeout 8 /tmp/ibgtest "$HOME/ibg_enforce_test" >/dev/null 2>&1 || true
+        sleep 1
+        logs_since "$since"
+        ;;
+      allow)
+        say "enforce(prod) + /tmp/ibgtest2 (ALLOWLIST_HIT expected)"
+        set_profile prod
+        set_mode enforce
+        restart_guard
+        since="$(date --iso-8601=seconds)"
+        timeout 8 /tmp/ibgtest2 "$HOME/ibg_enforce_test" >/dev/null 2>&1 || true
+        sleep 1
+        logs_since "$since"
+        ;;
+      kill)
+        say "enforce(prod) + /tmp/ibgtest (KILLED expected)"
+        set_profile prod
+        set_mode enforce
+        restart_guard
+        since="$(date --iso-8601=seconds)"
+        timeout 8 /tmp/ibgtest "$HOME/ibg_enforce_test" >/dev/null 2>&1 || true
+        sleep 1
+        logs_since "$since"
+        ;;
+      *)
+        echo "bad test: $t"; exit 2 ;;
+    esac
+    ;;
+
+  policy)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      show)
+        say "policy block"
+        sudo awk '
+          $0=="policy:" {in_policy=1}
+          in_policy {print}
+          in_policy && $0 ~ /^[^[:space:]]/ && $0!="policy:" {exit}
+        ' "$CFG" | sed -n '1,140p'
+        ;;
+      set)
+        key="${1:?key}"; val="${2:?value}"
+        sudo grep -q '^policy:' "$CFG" || printf '\npolicy:\n' | sudo tee -a "$CFG" >/dev/null
+
+        # insert key if missing under policy:
+        if ! sudo awk -v k="$key" '
+          $0=="policy:" {in_policy=1; next}
+          in_policy && $0 ~ /^[^[:space:]]/ {in_policy=0}
+          in_policy && $0 ~ "^[[:space:]]+"k":" {found=1}
+          END{exit(found?0:1)}
+        ' "$CFG"; then
+          sudo sed -i "/^policy:$/a\\  ${key}: ${val}" "$CFG"
+        fi
+
+        # set/replace value under policy:
+        sudo awk -v k="$key" -v v="$val" '
+          BEGIN{in_policy=0}
+          $0=="policy:" {in_policy=1; print; next}
+          in_policy && $0 ~ /^[^[:space:]]/ {in_policy=0}
+          in_policy && $0 ~ "^[[:space:]]+"k":" {print "  "k": "v; next}
+          {print}
+        ' "$CFG" | sudo tee "$CFG.tmp" >/dev/null
+        sudo mv "$CFG.tmp" "$CFG"
+
+        say "set policy.${key}=${val}"
+        restart_guard
+        ;;
+      *)
+        echo "Usage: ibg policy show | ibg policy set <key> <value>"
+        exit 2
+        ;;
+    esac
+    ;;
+
+  *)
+    usage
+    exit 2
+    ;;
+esac
