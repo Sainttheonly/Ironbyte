@@ -60,6 +60,74 @@ fn collect_subtree(root: u32, max_nodes: usize) -> Vec<u32> {
     out
 }
 
+// ---- identity sweep helpers ----
+const FNV_OFFSET: u64 = 1469598103934665603;
+const FNV_PRIME: u64  = 1099511628211;
+
+fn fnv1a64_prefix32(s: &str) -> u64 {
+    let mut h = FNV_OFFSET;
+    for &b in s.as_bytes().iter().take(32) {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
+}
+
+fn read_comm(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{}/comm", pid))
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+fn read_exe(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{}/exe", pid))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+fn identity_key_for_pid(pid: u32) -> Option<u64> {
+    let comm = read_comm(pid)?;
+    let exe = read_exe(pid).unwrap_or_else(|| "?".into());
+    Some(fnv1a64_prefix32(&format!("{}|{}", comm, exe)))
+}
+
+fn collect_identity_roots(risk_key: u64, max_roots: usize) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir("/proc") {
+        for ent in rd.flatten() {
+            let name = ent.file_name();
+            let name = name.to_string_lossy();
+            if !name.chars().all(|c| c.is_ascii_digit()) { continue; }
+            let pid = match name.parse::<u32>() { Ok(v) => v, Err(_) => continue };
+            if let Some(k) = identity_key_for_pid(pid) {
+                if k == risk_key {
+                    out.push(pid);
+                    if out.len() >= max_roots { break; }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn collect_identity_killset(risk_key: u64, fallback_root: u32, max_roots: usize, max_nodes: usize) -> Vec<u32> {
+    use std::collections::HashSet;
+    let mut roots = collect_identity_roots(risk_key, max_roots);
+    if roots.is_empty() {
+        roots.push(fallback_root);
+    }
+    let mut set: HashSet<u32> = HashSet::new();
+    for r in &roots {
+        for p in collect_subtree(*r, max_nodes) {
+            set.insert(p);
+        }
+    }
+    let mut v: Vec<u32> = set.into_iter().collect();
+    v.sort_unstable();
+    v
+}
+
+
 /// Score-based enforcement with escalation + subtree containment.
 /// Returns true if cooldown hit and caller should `return 0;`.
 pub fn maybe_kill_score(
@@ -128,21 +196,21 @@ pub fn maybe_kill_score(
     }
     last_kill_ns.insert(tgid, ts_ns);
 
-    let subtree = collect_subtree(tgid, 256);
+        let killset = collect_identity_killset(risk_key, tgid, 64, 512);
 
     if !skip_block {
-        for p in &subtree {
+        for p in &killset {
             lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
         }
     } else {
         eprintln!("POLICY skip_block=true reason=trusted_ancestry");
     }
 
-    for p in &subtree {
+    for p in &killset {
         let _ = kill(Pid::from_raw(*p as i32), Signal::SIGKILL);
     }
 
-    eprintln!("KILLED subtree root={} n={} comm={} score={:.2}", tgid, subtree.len(), comm, score);
+    eprintln!("KILLED identity key={} roots<=64 n={} comm={} score={:.2}", risk_key, killset.len(), comm, score);
     false
 }
 
@@ -205,20 +273,20 @@ pub fn maybe_kill_threshold(
     }
     last_kill_ns.insert(tgid, ts_ns);
 
-    let subtree = collect_subtree(tgid, 256);
+        let killset = collect_identity_killset(risk_key, tgid, 64, 512);
 
     if !skip_block {
-        for p in &subtree {
+        for p in &killset {
             lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
         }
     } else {
         eprintln!("POLICY skip_block=true reason=trusted_ancestry");
     }
 
-    for p in &subtree {
+    for p in &killset {
         let _ = kill(Pid::from_raw(*p as i32), Signal::SIGKILL);
     }
 
-    eprintln!("KILLED(threshold) subtree root={} n={} comm={}", tgid, subtree.len(), comm);
+    eprintln!("KILLED(threshold) identity key={} roots<=64 n={} comm={}", risk_key, killset.len(), comm);
     false
 }
