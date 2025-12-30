@@ -612,15 +612,6 @@ fn main() -> Result<()> {
     enforce,
 }, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
-                        // LSM_MARK_ALL_TRIPSCORE
-                        if enforce {
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        }
-                        // LSM_MARK_AFTER_TRIPLOG
-                        if enforce {
-                            lsm_mark_blocked(enforce, &mut blocked_map, &mut lsm_ctrl_map, ev.tgid);
-                        }
-
                         if enforce && !no_enforce {
                             let last = last_kill_ns.get(&ev.tgid).copied().unwrap_or(0);
                             if ev.ts_ns.saturating_sub(last) < cooldown_ns {
