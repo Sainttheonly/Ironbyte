@@ -25,7 +25,6 @@ pub fn maybe_kill_score(
 
     // Preserve existing behavior: mark TGID blocked in ENFORCE even for no_enforce comms.
     if skip_block {
-        eprintln!("POLICY skip_block=true reason=trusted_ancestry");
     } else {
         lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, tgid);
     }
@@ -44,7 +43,6 @@ pub fn maybe_kill_score(
 
     last_kill_ns.insert(tgid, ts_ns);
     if skip_kill {
-        eprintln!("POLICY skip_kill=true reason=trusted_ancestry");
         return false;
     }
     let _ = kill(Pid::from_raw(tgid as i32), Signal::SIGKILL);
@@ -84,13 +82,11 @@ pub fn maybe_kill_threshold(
 
     last_kill_ns.insert(tgid, ts_ns);
     if skip_block {
-        eprintln!("POLICY skip_block=true reason=trusted_ancestry");
     } else {
         lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, tgid);
     }
 
     if skip_kill {
-        eprintln!("POLICY skip_kill=true reason=trusted_ancestry");
         return false;
     }
     let _ = kill(Pid::from_raw(tgid as i32), Signal::SIGKILL);

@@ -644,6 +644,7 @@ let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                         eprintln!("DIRDBG2 tgid={} dh={} dir_n={}", ev.tgid, dh, dir_windows.get(&dh).map(|dw| dw.distinct.len()).unwrap_or(0));
                         if engine::enforce::maybe_kill_score(
                             enforce,
@@ -753,6 +754,7 @@ let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -846,6 +848,7 @@ let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -957,6 +960,7 @@ let skip_kill = trusted_skip_kill && ctx.trusted;
 let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
@@ -989,9 +993,11 @@ let ctx = engine::context::classify(&chain);
 let skip_kill = trusted_skip_kill && ctx.trusted;
 let skip_block = trusted_skip_block && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
 
 
 
+eprintln!("POLICY enforce={} trusted={} class={} skip_block={} skip_kill={} reason={}", enforce, ctx.trusted, ctx.class, skip_block, skip_kill, ctx.reason);
                     // cooldown+kill (enforce only)
                     if engine::enforce::maybe_kill_threshold(
                         enforce,
