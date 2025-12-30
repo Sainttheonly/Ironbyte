@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub fn maybe_kill_score(
     enforce: bool,
     no_enforce: bool,
+    skip_kill: bool,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -38,6 +39,10 @@ pub fn maybe_kill_score(
     }
 
     last_kill_ns.insert(tgid, ts_ns);
+    if skip_kill {
+        eprintln!("POLICY skip_kill=true reason=trusted_ancestry");
+        return false;
+    }
     let _ = kill(Pid::from_raw(tgid as i32), Signal::SIGKILL);
     eprintln!("KILLED tgid={} comm={} score={:.2}", tgid, comm, score);
     false
@@ -47,6 +52,7 @@ pub fn maybe_kill_score(
 pub fn maybe_kill_threshold(
     enforce: bool,
     no_enforce: bool,
+    skip_kill: bool,
     tgid: u32,
     ts_ns: u64,
     comm: &str,
@@ -73,6 +79,10 @@ pub fn maybe_kill_threshold(
 
     last_kill_ns.insert(tgid, ts_ns);
     lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, tgid);
+    if skip_kill {
+        eprintln!("POLICY skip_kill=true reason=trusted_ancestry");
+        return false;
+    }
     let _ = kill(Pid::from_raw(tgid as i32), Signal::SIGKILL);
     eprintln!("KILLED tgid={} comm={}", tgid, comm);
     false

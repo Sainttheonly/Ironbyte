@@ -30,7 +30,10 @@ fn fnv1a64(s: &str) -> u64 {
     }
     h
 }
-
+#[derive(Debug, Clone, Deserialize)]
+struct Policy {
+    trusted_ancestry_skip_kill: Option<bool>,
+}
 #[derive(Debug, Deserialize)]
 struct Config {
     mode: Option<String>,
@@ -44,6 +47,7 @@ struct Config {
     dir_window_seconds: Option<u64>,
     dir_min_distinct: Option<usize>,
 
+    policy: Option<Policy>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,15 +79,24 @@ struct Scoring {
 }
 
 impl Config {
+    fn trusted_ancestry_skip_kill(&self) -> bool {
+        // config-driven policy; default false
+        self.policy
+            .as_ref()
+            .and_then(|p| p.trusted_ancestry_skip_kill)
+            .unwrap_or(false)
+    }
+
     fn load() -> Self {
         let s = std::fs::read_to_string(CFG_PATH).unwrap_or_default();
         serde_yaml::from_str(&s).unwrap_or(Config {
             mode: Some("detect_only".into()),
+policy: None,
             thresholds: Some(Thresholds {
                 window_seconds: Some(1),
                 distinct_files: Some(50),
                 bytes: Some(5 * 1024 * 1024),
-            }),
+}),
             dir_window_seconds: Some(10),
             dir_min_distinct: Some(10),
             cooldown_seconds: Some(30),
@@ -340,6 +353,8 @@ fn main() -> Result<()> {
     let dir_min_distinct = cfg.dir_min_distinct();
     let ignore_set = cfg.ignore_set();
     let no_enforce_set = cfg.no_enforce_set();
+    let trusted_skip_kill = cfg.trusted_ancestry_skip_kill();
+
     let excluded_dirs = cfg.excluded_dir_hashes();
 
     let ignore_rules = cfg.ignore_rules.clone();
@@ -615,6 +630,7 @@ fn main() -> Result<()> {
 let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
+let skip_kill = trusted_skip_kill && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -622,6 +638,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
+    skip_kill,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -720,12 +737,14 @@ engine::trip::log_trip(&engine::types::TripContext {
 let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
+let skip_kill = trusted_skip_kill && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
+    skip_kill,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -809,12 +828,14 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
+let skip_kill = trusted_skip_kill && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
+    skip_kill,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -917,11 +938,13 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
 let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
+let skip_kill = trusted_skip_kill && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
                         if engine::enforce::maybe_kill_score(
                             enforce,
                             no_enforce,
+    skip_kill,
                             ev.tgid,
                             ev.ts_ns,
                             &w.last_comm,
@@ -946,6 +969,7 @@ engine::trip::log_trip_threshold(ev.tgid, &w.last_comm, w.distinct.len(), w.byte
 let chain = engine::process::ancestry(&mut proc_cache, ev.tgid, 8);
 eprintln!("ANCESTRY {}", engine::process::fmt_ancestry(&chain));
 let ctx = engine::context::classify(&chain);
+let skip_kill = trusted_skip_kill && ctx.trusted;
 eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.reason);
 
 
@@ -954,6 +978,7 @@ eprintln!("CONTEXT trusted={} class={} reason={}", ctx.trusted, ctx.class, ctx.r
                     if engine::enforce::maybe_kill_threshold(
                         enforce,
                         no_enforce,
+    skip_kill,
                         ev.tgid,
                         ev.ts_ns,
                         &w.last_comm,
