@@ -17,3 +17,7 @@ bpf/vmlinux.h
 # Local patch scripts
 patch_*.py
 bpf/patch_*.py
+
+# local backups
+src/main.rs.bak.*
+src/engine/*.bak.*
