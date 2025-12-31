@@ -3,6 +3,8 @@ name = "ironbyte-guard"
 version = "0.1.0"
 edition = "2021"
 
+description = "Kernel-level ransomware circuit breaker for Linux using eBPF + optional LSM enforcement"
+license = "Apache-2.0"
 [dependencies]
 anyhow = "1"
 libbpf-rs = "0.24"
