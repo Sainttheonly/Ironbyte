@@ -10,7 +10,19 @@ need_sudo(){ sudo -n true 2>/dev/null || { echo "ERROR: sudo needs password. Run
 
 wire_token(){
   local tok
-  tok="$(sudo awk -F'"' '/enforce_token:/ {print $2; exit}' "$CFG" || true)"
+  tok="$(sudo awk '
+BEGIN{inpolicy=0}
+/^[[:space:]]*policy:[[:space:]]*$/ {inpolicy=1; next}
+inpolicy && /^[^[:space:]]/ {inpolicy=0}
+inpolicy && /enforce_token:/ {
+  line=$0; sub(/.*enforce_token:[[:space:]]*/, "", line); gsub(/"/, "", line);
+  if (line != "" && line != "null") { print line; exit }
+}
+/enforce_token:/ {
+  line=$0; sub(/.*enforce_token:[[:space:]]*/, "", line); gsub(/"/, "", line);
+  if (line != "" && line != "null") { print line; exit }
+}
+' "$CFG" || true)"
   [[ -n "$tok" ]] || { echo "ERROR: enforce_token missing in $CFG"; exit 1; }
 
   sudo install -d -m 755 /etc/ironbyte-guard
