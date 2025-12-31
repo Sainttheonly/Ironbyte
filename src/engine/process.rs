@@ -13,7 +13,7 @@ fn read_ppid(tgid: u32) -> Option<u32> {
     // /proc/<pid>/stat: 4th field is ppid, but comm is inside parentheses and may contain spaces.
     let stat = fs::read_to_string(format!("/proc/{}/stat", tgid)).ok()?;
     let rparen = stat.rfind(')')?;
-    let after = &stat[rparen+1..];
+    let after = &stat[rparen + 1..];
     // after: " state ppid ..."
     let mut it = after.split_whitespace();
     let _state = it.next()?;
@@ -22,18 +22,22 @@ fn read_ppid(tgid: u32) -> Option<u32> {
 }
 
 fn read_comm(tgid: u32) -> Option<String> {
-    fs::read_to_string(format!("/proc/{}/comm", tgid)).ok().map(|s| s.trim().to_string())
+    fs::read_to_string(format!("/proc/{}/comm", tgid))
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn read_exe(tgid: u32) -> Option<String> {
-    fs::read_link(format!("/proc/{}/exe", tgid)).ok().map(|p| p.to_string_lossy().to_string())
+    fs::read_link(format!("/proc/{}/exe", tgid))
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 pub fn get_proc(cache: &mut HashMap<u32, ProcInfo>, tgid: u32) -> ProcInfo {
     if let Some(p) = cache.get(&tgid) {
         return p.clone();
     }
-    let info = ProcInfo{
+    let info = ProcInfo {
         tgid,
         ppid: read_ppid(tgid),
         comm: read_comm(tgid),
@@ -57,13 +61,11 @@ pub fn ancestry(cache: &mut HashMap<u32, ProcInfo>, tgid: u32, max_depth: usize)
     out
 }
 
-
-
 pub fn fmt_ancestry(chain: &[ProcInfo]) -> String {
     let mut parts = Vec::new();
     for p in chain {
         let comm = p.comm.clone().unwrap_or_else(|| "?".into());
-        let exe  = p.exe.clone().unwrap_or_else(|| "?".into());
+        let exe = p.exe.clone().unwrap_or_else(|| "?".into());
         parts.push(format!("{}({} {})", p.tgid, comm, exe));
     }
     parts.join(" <- ")

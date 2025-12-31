@@ -76,19 +76,16 @@ struct AllowRule {
     exe_prefixes: Vec<String>,
 }
 
-
-
-
 #[derive(Debug, Deserialize, Clone)]
 struct Scoring {
-    trunc_add: Option<f64>,         // added per O_TRUNC write
-    mb_add: Option<f64>,            // added per MB written
-    decay_per_second: Option<f64>,  // e.g. 0.90 means 10% leak per second
-    trigger: Option<f64>,           // score threshold for trip
-    min_distinct: Option<usize>,      // minimum distinct files required for score trip
-    rename_add: Option<f64>,          // added per rename event
-    unlink_add: Option<f64>,          // added per unlink event
-    ftruncate_add: Option<f64>,       // added per ftruncate event
+    trunc_add: Option<f64>,        // added per O_TRUNC write
+    mb_add: Option<f64>,           // added per MB written
+    decay_per_second: Option<f64>, // e.g. 0.90 means 10% leak per second
+    trigger: Option<f64>,          // score threshold for trip
+    min_distinct: Option<usize>,   // minimum distinct files required for score trip
+    rename_add: Option<f64>,       // added per rename event
+    unlink_add: Option<f64>,       // added per unlink event
+    ftruncate_add: Option<f64>,    // added per ftruncate event
 }
 
 impl Config {
@@ -102,35 +99,55 @@ impl Config {
     }
 
     fn kill_key_cooldown_ns(&self) -> u64 {
-        let s = self.policy.as_ref().and_then(|p| p.kill_key_cooldown_seconds).unwrap_or(30);
+        let s = self
+            .effective_policy()
+            .and_then(|p| p.kill_key_cooldown_seconds)
+            .unwrap_or(30);
         s * 1_000_000_000
     }
 
     fn enforce_enabled(&self) -> bool {
-        // Two-switch arming:
-        //   1) config mode = enforce
-        //   2) policy.enforce_token matches env IBG_ENFORCE_TOKEN
-        let mode_ok = self.mode.as_deref().unwrap_or("detect_only") == "enforce";
+        let mode_ok = self.mode.as_deref() == Some("enforce");
         if !mode_ok {
             return false;
         }
-        let cfg_tok = self.policy.as_ref().and_then(|p| p.enforce_token.clone()).unwrap_or_default();
+
+        let cfg_tok = self.effective_enforce_token();
         let env_tok = std::env::var("IBG_ENFORCE_TOKEN").unwrap_or_default();
-        if cfg_tok.is_empty() {
-            eprintln!("ENFORCE_REFUSED reason=missing_config_token");
+
+        if cfg_tok.is_empty() || env_tok.is_empty() {
             return false;
         }
-        if cfg_tok != env_tok {
-            eprintln!("ENFORCE_REFUSED reason=token_mismatch");
-            return false;
-        }
-        true
+        cfg_tok == env_tok
     }
 
     fn policy_for_active_profile(&self) -> Option<&Policy> {
         let name = self.active_profile.as_deref()?;
         self.profiles.as_ref()?.get(name)
     }
+
+    /// Effective policy resolution:
+    /// 1) active_profile (if set and found)
+    /// 2) top-level policy block
+    fn effective_policy(&self) -> Option<&Policy> {
+        self.policy_for_active_profile().or(self.policy.as_ref())
+    }
+
+    fn effective_enforce_token(&self) -> String {
+        let prof = self
+            .policy_for_active_profile()
+            .and_then(|p| p.enforce_token.clone())
+            .filter(|s| !s.is_empty());
+
+        let glob = self
+            .policy
+            .as_ref()
+            .and_then(|p| p.enforce_token.clone())
+            .filter(|s| !s.is_empty());
+
+        prof.or(glob).unwrap_or_default()
+    }
+
     fn trusted_ancestry_skip_block(&self) -> bool {
         // Resolution order: active profile -> global policy -> default false
         if let Some(p) = self.policy_for_active_profile() {
@@ -162,20 +179,37 @@ impl Config {
             mode: Some("detect_only".into()),
             profiles: None,
             active_profile: None,
-policy: None,
+            policy: None,
             thresholds: Some(Thresholds {
                 window_seconds: Some(1),
                 distinct_files: Some(50),
                 bytes: Some(5 * 1024 * 1024),
-}),
+            }),
             dir_window_seconds: Some(10),
             dir_min_distinct: Some(10),
             cooldown_seconds: Some(30),
             scoring: None,
-            ignore_comms: Some(vec![
-                "apt","apt-get","dpkg","unattended-upgr","rsync","tar","gzip","pigz","zstd",
-                "updatedb","locate","cp","mv","ironbyte-guard"
-            ].into_iter().map(|s| s.to_string()).collect()),
+            ignore_comms: Some(
+                vec![
+                    "apt",
+                    "apt-get",
+                    "dpkg",
+                    "unattended-upgr",
+                    "rsync",
+                    "tar",
+                    "gzip",
+                    "pigz",
+                    "zstd",
+                    "updatedb",
+                    "locate",
+                    "cp",
+                    "mv",
+                    "ironbyte-guard",
+                ]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ),
             exclude_dirs: Some(vec![
                 "/var/log/".into(),
                 "/var/cache/".into(),
@@ -192,7 +226,10 @@ policy: None,
     }
 
     fn scoring_trunc_add(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.trunc_add).unwrap_or(10.0)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.trunc_add)
+            .unwrap_or(10.0)
     }
 
     fn scoring_mb_add(&self) -> f64 {
@@ -200,29 +237,49 @@ policy: None,
     }
 
     fn scoring_decay(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.decay_per_second).unwrap_or(0.90)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.decay_per_second)
+            .unwrap_or(0.90)
     }
 
     fn scoring_trigger(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.trigger).unwrap_or(100.0)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.trigger)
+            .unwrap_or(100.0)
     }
 
     fn scoring_min_distinct(&self) -> usize {
-        self.scoring.as_ref().and_then(|s| s.min_distinct).unwrap_or(10)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.min_distinct)
+            .unwrap_or(10)
     }
 
     fn scoring_rename_add(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.rename_add).unwrap_or(5.0)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.rename_add)
+            .unwrap_or(5.0)
     }
 
     fn scoring_unlink_add(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.unlink_add).unwrap_or(8.0)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.unlink_add)
+            .unwrap_or(8.0)
     }
 
     fn scoring_ftruncate_add(&self) -> f64 {
-        self.scoring.as_ref().and_then(|s| s.ftruncate_add).unwrap_or(12.0)
+        self.scoring
+            .as_ref()
+            .and_then(|s| s.ftruncate_add)
+            .unwrap_or(12.0)
     }
-    fn enforce(&self) -> bool { self.enforce_enabled() }
+    fn enforce(&self) -> bool {
+        self.enforce_enabled()
+    }
 
     fn distinct_thresh(&self) -> usize {
         self.thresholds
@@ -232,7 +289,10 @@ policy: None,
     }
 
     fn bytes_thresh(&self) -> u64 {
-        self.thresholds.as_ref().and_then(|t| t.bytes).unwrap_or(5 * 1024 * 1024)
+        self.thresholds
+            .as_ref()
+            .and_then(|t| t.bytes)
+            .unwrap_or(5 * 1024 * 1024)
     }
 
     fn cooldown_ns(&self) -> u64 {
@@ -247,15 +307,21 @@ policy: None,
         self.dir_min_distinct.unwrap_or(10)
     }
 
-
     fn ignore_set(&self) -> HashSet<String> {
-        self.ignore_comms.clone().unwrap_or_default().into_iter().collect()
+        self.ignore_comms
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 
     fn no_enforce_set(&self) -> HashSet<String> {
-        self.no_enforce_comms.clone().unwrap_or_default().into_iter().collect()
+        self.no_enforce_comms
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
-
 
     fn excluded_dir_hashes(&self) -> HashSet<u64> {
         self.exclude_dirs
@@ -267,8 +333,12 @@ policy: None,
     }
 }
 
-
-fn lsm_mark_blocked(enforce: bool, blocked_map: &mut dyn MapCore, lsm_ctrl_map: &mut dyn MapCore, tgid: u32) {
+fn lsm_mark_blocked(
+    enforce: bool,
+    blocked_map: &mut dyn MapCore,
+    lsm_ctrl_map: &mut dyn MapCore,
+    tgid: u32,
+) {
     // LSM_PHASE2: enable enforcement and mark this tgid as blocked
     eprintln!("LSM_MARK_CALLED: tgid={}", tgid);
 
@@ -277,18 +347,25 @@ fn lsm_mark_blocked(enforce: bool, blocked_map: &mut dyn MapCore, lsm_ctrl_map: 
         return;
     }
 
-
     let key0: u32 = 0;
     let one: u8 = 1;
 
     // enable enforcement
-    match lsm_ctrl_map.update(&key0.to_ne_bytes(), &one.to_ne_bytes(), libbpf_rs::MapFlags::ANY) {
+    match lsm_ctrl_map.update(
+        &key0.to_ne_bytes(),
+        &one.to_ne_bytes(),
+        libbpf_rs::MapFlags::ANY,
+    ) {
         Ok(_) => eprintln!("LSM_UPDATE_OK: lsm_control[0]=1"),
         Err(e) => eprintln!("LSM_UPDATE_ERR: lsm_control update failed: {e}"),
     }
 
     // mark tgid
-    match blocked_map.update(&tgid.to_ne_bytes(), &one.to_ne_bytes(), libbpf_rs::MapFlags::ANY) {
+    match blocked_map.update(
+        &tgid.to_ne_bytes(),
+        &one.to_ne_bytes(),
+        libbpf_rs::MapFlags::ANY,
+    ) {
         Ok(_) => eprintln!("LSM_UPDATE_OK: blocked_tgids[{tgid}]=1"),
         Err(e) => eprintln!("LSM_UPDATE_ERR: blocked_tgids update failed (tgid={tgid}): {e}"),
     }
@@ -326,9 +403,7 @@ struct WindowState {
     tripped: bool,
     score: f64,
     last_ts_ns: u64,
-
 }
-
 
 #[derive(Default)]
 struct DirWindow {
@@ -336,15 +411,17 @@ struct DirWindow {
     distinct: std::collections::HashSet<u64>, // path_hash
 }
 
-
 fn comm_str(comm: [u8; 16]) -> String {
-    String::from_utf8_lossy(&comm).trim_end_matches('\0').to_string()
+    String::from_utf8_lossy(&comm)
+        .trim_end_matches('\0')
+        .to_string()
 }
-
 
 fn read_exe_path(tgid: u32) -> Option<String> {
     let p = format!("/proc/{}/exe", tgid);
-    std::fs::read_link(p).ok().map(|pb| pb.to_string_lossy().to_string())
+    std::fs::read_link(p)
+        .ok()
+        .map(|pb| pb.to_string_lossy().to_string())
 }
 
 fn comm_has_rule(comm: &str, rules: &Option<Vec<AllowRule>>) -> bool {
@@ -378,7 +455,6 @@ fn allowed_by_rules(comm: &str, exe_path: Option<&str>, rules: &Option<Vec<Allow
     false
 }
 
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct FileEvent64 {
@@ -397,13 +473,14 @@ const _: [u8; 64] = [0u8; core::mem::size_of::<FileEvent64>()];
 
 fn main() -> Result<()> {
     let cfg = Config::load();
+    eprintln!("cfg.active_profile={:?}", cfg.active_profile);
     // Wire policy -> enforcement tunables (set once; read by engine/enforce.rs)
     // Defaults match enforce.rs (tunables()) fallback.
-    if let Some(pol) = cfg.policy.as_ref() {
+    if let Some(pol) = cfg.effective_policy() {
         let killset_cap = pol.killset_cap.unwrap_or(256) as usize;
-        let window_ns   = pol.budget_window_ns.unwrap_or(60000000000);
-        let global_lim  = pol.budget_global_limit.unwrap_or(200);
-        let per_id_lim  = pol.budget_per_id_limit.unwrap_or(50);
+        let window_ns = pol.budget_window_ns.unwrap_or(60000000000);
+        let global_lim = pol.budget_global_limit.unwrap_or(200);
+        let per_id_lim = pol.budget_per_id_limit.unwrap_or(50);
 
         set_tunables(Tunables {
             killset_cap,
@@ -427,8 +504,12 @@ fn main() -> Result<()> {
         eprintln!("[*] tunables wired: defaults (no policy)");
     }
 
-
-    eprintln!("cfg.mode={:?} env.ENFORCE={:?} cfg_path={}", cfg.mode, std::env::var("ENFORCE").ok(), CFG_PATH);
+    eprintln!(
+        "cfg.mode={:?} env.ENFORCE={:?} cfg_path={}",
+        cfg.mode,
+        std::env::var("ENFORCE").ok(),
+        CFG_PATH
+    );
     let enforce = cfg.enforce();
     let window_ns = cfg.window_ns();
     let distinct_thresh = cfg.distinct_thresh();
@@ -445,13 +526,11 @@ fn main() -> Result<()> {
     let trusted_skip_block = cfg.trusted_ancestry_skip_block();
     // identity allowlist (exact match): "comm|exe_norm"
     let identity_allowlist: std::collections::HashSet<String> = cfg
-        .policy
-        .as_ref()
+        .effective_policy()
         .and_then(|p| p.identity_allowlist.clone())
         .unwrap_or_default()
         .into_iter()
         .collect();
-
 
     let excluded_dirs = cfg.excluded_dir_hashes();
 
@@ -477,20 +556,52 @@ fn main() -> Result<()> {
         cooldown_ns
     );
 
+    // Canonical boot summary for auditing what policy actually took effect
+    let pol = cfg.effective_policy();
+    let killset_cap = pol.and_then(|p| p.killset_cap).unwrap_or(256) as usize;
+    let budget_window_ns = pol
+        .and_then(|p| p.budget_window_ns)
+        .unwrap_or(60_000_000_000);
+    let budget_global_limit = pol.and_then(|p| p.budget_global_limit).unwrap_or(200);
+    let budget_per_id_limit = pol.and_then(|p| p.budget_per_id_limit).unwrap_or(50);
+
+    let env_tok = std::env::var("IBG_ENFORCE_TOKEN").unwrap_or_default();
+    let cfg_tok = cfg.effective_enforce_token();
+    let mode_req = cfg.mode.as_deref() == Some("enforce");
+    let token_ok = !cfg_tok.is_empty() && cfg_tok == env_tok;
+    eprintln!(
+        "EFFECTIVE_TUNABLES mode={} profile={:?} window_ns={} distinct>={} bytes>={} cooldown_ns={} kill_key_cooldown_ns={} killset_cap={} budget_window_ns={} budget_global_limit={} budget_per_id_limit={} mode_req={} token_ok={} armed={}",
+        if enforce { "ENFORCE" } else { "DETECT_ONLY" },
+        cfg.active_profile,
+        window_ns,
+        distinct_thresh,
+        bytes_thresh,
+        cooldown_ns,
+        cfg.kill_key_cooldown_ns(),
+        killset_cap,
+        budget_window_ns,
+        budget_global_limit,
+        budget_per_id_limit,
+        mode_req,
+        token_ok,
+        enforce
+    );
+
     // force autoload for LSM before load()
     let mut open_obj = ObjectBuilder::default()
         .open_file(bpf_obj)
         .with_context(|| format!("open BPF object {}", bpf_obj))?;
 
     // force autoload for LSM program (otherwise it may be skipped)
-    if let Some(mut p) = open_obj.progs_mut().find(|p| p.name() == "handle_lsm_file_permission") {
+    if let Some(mut p) = open_obj
+        .progs_mut()
+        .find(|p| p.name() == "handle_lsm_file_permission")
+    {
         // force autoload for LSM
         p.set_autoload(true);
     }
 
-    let mut obj = open_obj
-        .load()
-        .context("load BPF object")?;
+    let mut obj = open_obj.load().context("load BPF object")?;
 
     let p_write = obj
         .progs_mut()
@@ -513,9 +624,7 @@ fn main() -> Result<()> {
         .progs_mut()
         .find(|p| p.name() == "handle_lsm_file_permission")
         .context("missing program handle_lsm_file_permission")?;
-    let _lk_lsm = p_lsm
-        .attach_lsm()
-        .context("attach lsm/file_permission")?;
+    let _lk_lsm = p_lsm.attach_lsm().context("attach lsm/file_permission")?;
 
     let p_open_enter = obj
         .progs_mut()
@@ -581,19 +690,19 @@ fn main() -> Result<()> {
     // --- SAFETY INVARIANT: detect_only ALWAYS disables enforcement ---
 
     if !enforce {
-
         let key0: u32 = 0;
 
         let zero: u8 = 0;
 
-        match lsm_ctrl_map.update(&key0.to_ne_bytes(), &zero.to_ne_bytes(), libbpf_rs::MapFlags::ANY) {
-
+        match lsm_ctrl_map.update(
+            &key0.to_ne_bytes(),
+            &zero.to_ne_bytes(),
+            libbpf_rs::MapFlags::ANY,
+        ) {
             Ok(_) => eprintln!("LSM_SAFETY_OK: lsm_control[0]=0 (detect_only)"),
 
             Err(e) => eprintln!("LSM_SAFETY_ERR: failed to set lsm_control[0]=0: {e}"),
-
         }
-
     }
     let self_tgid = std::process::id();
 
@@ -1093,7 +1202,7 @@ if engine::enforce::maybe_kill_score(
                     w.bytes = 0;
                     w.distinct.clear();
                     w.tripped = false;
-                
+
 
                     if scoring_enabled {
                         w.score = 0.0;

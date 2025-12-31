@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::engine::risk::RiskState;
 
-
 // ---- tunables (set once by userspace main) ----
 #[derive(Clone, Copy)]
 pub struct Tunables {
@@ -85,7 +84,6 @@ fn collect_subtree(root: u32, max_nodes: usize) -> Vec<u32> {
     out
 }
 
-
 // ---- kill budgets (userspace) ----
 #[derive(Default)]
 struct BudgetState {
@@ -102,9 +100,15 @@ fn budget_reset_if_needed(st: &mut BudgetState, now_ns: u64, window_ns: u64) {
     }
 }
 
-fn budget_can_kill(st: &mut BudgetState, now_ns: u64, window_ns: u64,
-                   risk_key: u64, add: u32,
-                   global_limit: u32, per_id_limit: u32) -> bool {
+fn budget_can_kill(
+    st: &mut BudgetState,
+    now_ns: u64,
+    window_ns: u64,
+    risk_key: u64,
+    add: u32,
+    global_limit: u32,
+    per_id_limit: u32,
+) -> bool {
     budget_reset_if_needed(st, now_ns, window_ns);
     let cur_id = *st.per_id.get(&risk_key).unwrap_or(&0);
     if st.global_kills.saturating_add(add) > global_limit {
@@ -122,11 +126,12 @@ fn budget_apply_kill(st: &mut BudgetState, risk_key: u64, add: u32) {
     *e = e.saturating_add(add);
 }
 
-static BUDGET_STATE: std::sync::OnceLock<std::sync::Mutex<BudgetState>> = std::sync::OnceLock::new();
+static BUDGET_STATE: std::sync::OnceLock<std::sync::Mutex<BudgetState>> =
+    std::sync::OnceLock::new();
 
 // ---- identity sweep helpers ----
 const FNV_OFFSET: u64 = 1469598103934665603;
-const FNV_PRIME: u64  = 1099511628211;
+const FNV_PRIME: u64 = 1099511628211;
 
 fn fnv1a64_prefix32(s: &str) -> u64 {
     let mut h = FNV_OFFSET;
@@ -161,12 +166,19 @@ fn collect_identity_roots(risk_key: u64, max_roots: usize) -> Vec<u32> {
         for ent in rd.flatten() {
             let name = ent.file_name();
             let name = name.to_string_lossy();
-            if !name.chars().all(|c| c.is_ascii_digit()) { continue; }
-            let pid = match name.parse::<u32>() { Ok(v) => v, Err(_) => continue };
+            if !name.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let pid = match name.parse::<u32>() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
             if let Some(k) = identity_key_for_pid(pid) {
                 if k == risk_key {
                     out.push(pid);
-                    if out.len() >= max_roots { break; }
+                    if out.len() >= max_roots {
+                        break;
+                    }
                 }
             }
         }
@@ -174,7 +186,12 @@ fn collect_identity_roots(risk_key: u64, max_roots: usize) -> Vec<u32> {
     out
 }
 
-fn collect_identity_killset(risk_key: u64, fallback_root: u32, max_roots: usize, max_nodes: usize) -> Vec<u32> {
+fn collect_identity_killset(
+    risk_key: u64,
+    fallback_root: u32,
+    max_roots: usize,
+    max_nodes: usize,
+) -> Vec<u32> {
     use std::collections::HashSet;
     let mut roots = collect_identity_roots(risk_key, max_roots);
     if roots.is_empty() {
@@ -190,7 +207,6 @@ fn collect_identity_killset(risk_key: u64, fallback_root: u32, max_roots: usize,
     v.sort_unstable();
     v
 }
-
 
 /// Score-based enforcement with escalation + subtree containment.
 /// Returns true if cooldown hit and caller should `return 0;`.
@@ -218,23 +234,25 @@ pub fn maybe_kill_score(
     *killed_out = 0;
 
     // Escalate risk
-    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
-let mut next = cur;
-if enforce {
-    next = cur.next();
-    risk_state.insert(risk_key, next);
-}
-eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
-if allowlisted {
-    eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
-    return false;
-}
+    let cur = risk_state
+        .get(&risk_key)
+        .copied()
+        .unwrap_or(RiskState::Observe);
+    let mut next = cur;
+    if enforce {
+        next = cur.next();
+        risk_state.insert(risk_key, next);
+    }
+    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+    if allowlisted {
+        eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
+        return false;
+    }
 
     // Actions are gated by enforce
     if !enforce {
         return false;
     }
-
 
     // OBSERVE: log-only
     if next == RiskState::Observe {
@@ -242,18 +260,16 @@ if allowlisted {
     }
 
     // WARN: block root only (if allowed)
-        if next == RiskState::Warn {
+    if next == RiskState::Warn {
         // log-only (no action)
         return false;
     }
-
 
     // CONTAIN: block subtree (no kill)
-        if next == RiskState::Contain {
+    if next == RiskState::Contain {
         // log-only (no action)
         return false;
     }
-
 
     // KILL: honor policies + cooldown, kill subtree
     if no_enforce {
@@ -268,12 +284,15 @@ if allowlisted {
 
     let last = last_kill_ns.get(&tgid).copied().unwrap_or(0);
     if ts_ns.saturating_sub(last) < cooldown_ns {
-        eprintln!("COOLDOWN: tgid={} comm={} (skip kill) score={:.2}", tgid, comm, score);
+        eprintln!(
+            "COOLDOWN: tgid={} comm={} (skip kill) score={:.2}",
+            tgid, comm, score
+        );
         return true;
     }
     last_kill_ns.insert(tgid, ts_ns);
 
-        let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+    let killset = collect_identity_killset(risk_key, tgid, 64, 512);
 
     // DEBUG: per-key last kill (always log when we reach Kill stage)
     let last_key = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
@@ -281,7 +300,10 @@ if allowlisted {
     } else {
         let dt = ts_ns.saturating_sub(last_key);
         if dt < key_cooldown_ns {
-            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            eprintln!(
+                "KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill",
+                risk_key, dt, key_cooldown_ns
+            );
             return false;
         }
     }
@@ -290,19 +312,27 @@ if allowlisted {
     if let Some(last) = last_kill_key_ns.get(&risk_key).copied() {
         let dt = ts_ns.saturating_sub(last);
         if dt < key_cooldown_ns {
-            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            eprintln!(
+                "KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill",
+                risk_key, dt, key_cooldown_ns
+            );
             return false;
         }
     }
-let t = tunables();
+    let t = tunables();
     let max_killset: usize = t.killset_cap;
     let budget_window_ns: u64 = t.budget_window_ns;
     let global_limit: u32 = t.budget_global_limit;
-    let per_id_limit: u32 = t.budget_per_id_limit;                // max kills per identity per minute
+    let per_id_limit: u32 = t.budget_per_id_limit; // max kills per identity per minute
 
     // If killset is huge, do not SIGKILL storm; block-only and log.
     if killset.len() > max_killset {
-        eprintln!("KILLSET_CAP_HIT key={} n={} cap={} -> block-only", risk_key, killset.len(), max_killset);
+        eprintln!(
+            "KILLSET_CAP_HIT key={} n={} cap={} -> block-only",
+            risk_key,
+            killset.len(),
+            max_killset
+        );
         // block-only path
         if !skip_block {
             for p in &killset {
@@ -316,9 +346,24 @@ let t = tunables();
     let mtx = BUDGET_STATE.get_or_init(|| std::sync::Mutex::new(BudgetState::default()));
     let mut st = mtx.lock().unwrap();
     let add = killset.len() as u32;
-    if !budget_can_kill(&mut st, ts_ns, budget_window_ns, risk_key, add, global_limit, per_id_limit) {
-        eprintln!("BUDGET_HIT key={} add={} global={}/{} per_id={}/{} -> block-only",
-                  risk_key, add, st.global_kills, global_limit, *st.per_id.get(&risk_key).unwrap_or(&0), per_id_limit);
+    if !budget_can_kill(
+        &mut st,
+        ts_ns,
+        budget_window_ns,
+        risk_key,
+        add,
+        global_limit,
+        per_id_limit,
+    ) {
+        eprintln!(
+            "BUDGET_HIT key={} add={} global={}/{} per_id={}/{} -> block-only",
+            risk_key,
+            add,
+            st.global_kills,
+            global_limit,
+            *st.per_id.get(&risk_key).unwrap_or(&0),
+            per_id_limit
+        );
         drop(st);
         if !skip_block {
             for p in &killset {
@@ -344,7 +389,13 @@ let t = tunables();
 
     *killed_out = killset.len() as u32;
     last_kill_key_ns.insert(risk_key, ts_ns);
-    eprintln!("KILLED identity key={} roots<=64 n={} comm={} score={:.2}", risk_key, killset.len(), comm, score);
+    eprintln!(
+        "KILLED identity key={} roots<=64 n={} comm={} score={:.2}",
+        risk_key,
+        killset.len(),
+        comm,
+        score
+    );
     false
 }
 
@@ -374,35 +425,35 @@ pub fn maybe_kill_threshold(
 ) -> bool {
     *killed_out = 0;
 
-    let cur = risk_state.get(&risk_key).copied().unwrap_or(RiskState::Observe);
-let mut next = cur;
-if enforce {
-    next = cur.next();
-    risk_state.insert(risk_key, next);
-}
-eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
-if allowlisted {
-    eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
-    return false;
-}
+    let cur = risk_state
+        .get(&risk_key)
+        .copied()
+        .unwrap_or(RiskState::Observe);
+    let mut next = cur;
+    if enforce {
+        next = cur.next();
+        risk_state.insert(risk_key, next);
+    }
+    eprintln!("RISK key={} tgid={} {:?}->{:?}", risk_key, tgid, cur, next);
+    if allowlisted {
+        eprintln!("ALLOWLIST_HIT key={} comm={} -> log-only", risk_key, comm);
+        return false;
+    }
 
     // Actions are gated by enforce
     if !enforce || no_enforce {
         return false;
     }
 
-
-        if next == RiskState::Warn {
+    if next == RiskState::Warn {
         // log-only (no action)
         return false;
     }
 
-
-        if next == RiskState::Contain {
+    if next == RiskState::Contain {
         // log-only (no action)
         return false;
     }
-
 
     if next != RiskState::Kill {
         return false;
@@ -415,12 +466,15 @@ if allowlisted {
 
     let last = last_kill_ns.get(&tgid).copied().unwrap_or(0);
     if ts_ns.saturating_sub(last) < cooldown_ns {
-        eprintln!("COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}", tgid, comm, distinct, bytes);
+        eprintln!(
+            "COOLDOWN: tgid={} comm={} (skip kill) distinct={} bytes={}",
+            tgid, comm, distinct, bytes
+        );
         return true;
     }
     last_kill_ns.insert(tgid, ts_ns);
 
-        let killset = collect_identity_killset(risk_key, tgid, 64, 512);
+    let killset = collect_identity_killset(risk_key, tgid, 64, 512);
 
     // DEBUG: per-key last kill (always log when we reach Kill stage)
     let last_key = last_kill_key_ns.get(&risk_key).copied().unwrap_or(0);
@@ -428,7 +482,10 @@ if allowlisted {
     } else {
         let dt = ts_ns.saturating_sub(last_key);
         if dt < key_cooldown_ns {
-            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            eprintln!(
+                "KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill",
+                risk_key, dt, key_cooldown_ns
+            );
             return false;
         }
     }
@@ -437,18 +494,26 @@ if allowlisted {
     if let Some(last) = last_kill_key_ns.get(&risk_key).copied() {
         let dt = ts_ns.saturating_sub(last);
         if dt < key_cooldown_ns {
-            eprintln!("KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill", risk_key, dt, key_cooldown_ns);
+            eprintln!(
+                "KILL_KEY_COOLDOWN key={} dt_ns={} cooldown_ns={} -> skip kill",
+                risk_key, dt, key_cooldown_ns
+            );
             return false;
         }
     }
-let t = tunables();
+    let t = tunables();
     let max_killset: usize = t.killset_cap;
     let budget_window_ns: u64 = t.budget_window_ns;
     let global_limit: u32 = t.budget_global_limit;
     let per_id_limit: u32 = t.budget_per_id_limit;
 
     if killset.len() > max_killset {
-        eprintln!("KILLSET_CAP_HIT(threshold) key={} n={} cap={} -> block-only", risk_key, killset.len(), max_killset);
+        eprintln!(
+            "KILLSET_CAP_HIT(threshold) key={} n={} cap={} -> block-only",
+            risk_key,
+            killset.len(),
+            max_killset
+        );
         if !skip_block {
             for p in &killset {
                 lsm_mark_blocked(enforce, blocked_map, lsm_ctrl_map, *p);
@@ -460,9 +525,24 @@ let t = tunables();
     let mtx = BUDGET_STATE.get_or_init(|| std::sync::Mutex::new(BudgetState::default()));
     let mut st = mtx.lock().unwrap();
     let add = killset.len() as u32;
-    if !budget_can_kill(&mut st, ts_ns, budget_window_ns, risk_key, add, global_limit, per_id_limit) {
-        eprintln!("BUDGET_HIT(threshold) key={} add={} global={}/{} per_id={}/{} -> block-only",
-                  risk_key, add, st.global_kills, global_limit, *st.per_id.get(&risk_key).unwrap_or(&0), per_id_limit);
+    if !budget_can_kill(
+        &mut st,
+        ts_ns,
+        budget_window_ns,
+        risk_key,
+        add,
+        global_limit,
+        per_id_limit,
+    ) {
+        eprintln!(
+            "BUDGET_HIT(threshold) key={} add={} global={}/{} per_id={}/{} -> block-only",
+            risk_key,
+            add,
+            st.global_kills,
+            global_limit,
+            *st.per_id.get(&risk_key).unwrap_or(&0),
+            per_id_limit
+        );
         drop(st);
         if !skip_block {
             for p in &killset {
@@ -488,6 +568,11 @@ let t = tunables();
 
     *killed_out = killset.len() as u32;
     last_kill_key_ns.insert(risk_key, ts_ns);
-    eprintln!("KILLED(threshold) identity key={} roots<=64 n={} comm={}", risk_key, killset.len(), comm);
+    eprintln!(
+        "KILLED(threshold) identity key={} roots<=64 n={} comm={}",
+        risk_key,
+        killset.len(),
+        comm
+    );
     false
 }

@@ -11,7 +11,7 @@ fn has_any(chain: &[ProcInfo], needles: &[&str]) -> Vec<String> {
     let mut hit: Vec<String> = Vec::new();
     for p in chain {
         let comm = p.comm.as_deref().unwrap_or("");
-        let exe  = p.exe.as_deref().unwrap_or("");
+        let exe = p.exe.as_deref().unwrap_or("");
         for &n in needles {
             if comm == n || exe.ends_with(n) {
                 let nn = n.to_string();
@@ -24,19 +24,19 @@ fn has_any(chain: &[ProcInfo], needles: &[&str]) -> Vec<String> {
     hit
 }
 
-
 /// LOG-ONLY classification based on ancestry.
 /// No enforcement decisions here. Just a structured hint.
 pub fn classify(chain: &[ProcInfo]) -> ContextClass {
     // Signals
     let dev_toolchain = [
-        "cargo", "rustc", "clang", "gcc", "cc", "ld", "make", "cmake", "ninja",
-        "go", "javac", "gradle", "mvn",
-        "node", "npm", "pnpm", "yarn",
+        "cargo", "rustc", "clang", "gcc", "cc", "ld", "make", "cmake", "ninja", "go", "javac",
+        "gradle", "mvn", "node", "npm", "pnpm", "yarn",
     ];
-    let pkg_mgr = ["apt", "apt-get", "dpkg", "dnf", "yum", "pacman", "zypper", "snap", "flatpak"];
+    let pkg_mgr = [
+        "apt", "apt-get", "dpkg", "dnf", "yum", "pacman", "zypper", "snap", "flatpak",
+    ];
     let remote = ["sshd", "ssh", "tailscaled"];
-    let sched  = ["systemd", "cron", "crond"];
+    let sched = ["systemd", "cron", "crond"];
 
     let dev_hits = has_any(chain, &dev_toolchain);
     if !dev_hits.is_empty() {
